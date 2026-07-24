@@ -38,8 +38,10 @@ home/.claude/*
 !home/.claude/skills/
 
 # Tied to a private Notion workspace and of no use to anyone else. Kept on
-# this machine, never published.
+# this machine, never published. `dot skills` copies it in from
+# sixfourtwelve/skills too, so both trees need the exclusion.
 home/.claude/skills/noteday/
+home/.agents/skills/noteday/
 
 # ---------------------------------------------------------------------------
 # ~/.config/herdr — config.toml only. session*.json, the logs, cached release

@@ -3,7 +3,7 @@
 # Format, one per line:
 #   owner/repo [destination]
 #
-# destination is optional and defaults to ~/Developer/<repo>.
+# destination is optional and defaults to ~/Code/<repo>.
 #
 # These are cloned over SSH, so `dot repos clone` refuses to run until the
 # machine's key is registered with GitHub — it checks, rather than failing
@@ -13,3 +13,4 @@
 # Already-cloned repos are left completely alone: never pulled, never reset.
 
 sixfourtwelve/mono-lisa
+sixfourtwelve/skills

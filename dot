@@ -630,7 +630,7 @@ migrate_ollama_to_cask() {
 # dot repos — private repositories, cloned over SSH
 # ---------------------------------------------------------------------------
 
-REPOS_DIR=${REPOS_DIR:-$HOME/Developer}
+REPOS_DIR=${REPOS_DIR:-$HOME/Code}
 
 repos_manifest() {
   [ -f "$PACKAGES_DIR/repos" ] || return 0
@@ -684,6 +684,26 @@ cmd_fonts() {
   done < <(find "$src" \( -name '*.ttf' -o -name '*.otf' \) 2>/dev/null)
 
   ok "$installed installed, $skipped already present"
+}
+
+# ---------------------------------------------------------------------------
+# dot skills — sync sixfourtwelve/skills into home/.agents/skills
+# ---------------------------------------------------------------------------
+
+cmd_skills() {
+  local src=$REPOS_DIR/skills
+
+  step "Skills (sixfourtwelve/skills)"
+  if [ ! -x "$src/scripts/install-skills.sh" ]; then
+    warn "no skills repo at ${src/#$HOME/\~} — run 'dot repos clone' first"
+    return 0
+  fi
+
+  run env SKILLS_DEST="$HOME_DIR/.agents/skills" "$src/scripts/install-skills.sh"
+
+  # install-skills.sh writes into home/.agents/skills, a tracked path — restow
+  # so the new/changed files are symlinked into ~/.agents/skills right away.
+  cmd_stow
 }
 
 cmd_repos() {
@@ -1221,7 +1241,7 @@ cmd_init() {
   [ "$SKIP_SSH" = true ]    || try_step "gen-ssh-key" cmd_gen_ssh_key
   [ "$SKIP_GPG" = true ]    || try_step "gen-gpg-key" cmd_gen_gpg_key
   # Strictly after gen-ssh-key: the manifest is private repos over SSH.
-  [ "$SKIP_REPOS" = true ]  || { try_step "repos" repos_clone; try_step "fonts" cmd_fonts; }
+  [ "$SKIP_REPOS" = true ]  || { try_step "repos" repos_clone; try_step "fonts" cmd_fonts; try_step "skills" cmd_skills; }
   if [ "$SKIP_OLLAMA" = false ]; then
     try_step "ollama migration" migrate_ollama_to_cask
     try_step "ollama sync" ollama_cmd_sync
@@ -1290,6 +1310,7 @@ cmd_retry_failed() {
       gen-gpg-key)         try_step "$name" cmd_gen_gpg_key ;;
       repos)               try_step "$name" repos_clone ;;
       fonts)               try_step "$name" cmd_fonts ;;
+      skills)              try_step "$name" cmd_skills ;;
       "clone "*)           try_step "$name" run git clone "git@github.com:${name#clone }.git" ;;
       tools)               try_step "$name" tools_install ;;
       "tool "*)            try_step "$name" tools_install "${name#tool }" ;;
@@ -1382,6 +1403,7 @@ complete -c dot -n "__fish_seen_subcommand_from repos"   -a "list clone add"
 complete -c dot -n "__fish_seen_subcommand_from tools"   -a "list install"
 complete -c dot -n "__fish_seen_subcommand_from tools" -l force -d "Reinstall even if already on PATH"
 complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a fonts           -d "Install fonts from the mono-lisa clone"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a skills          -d "Sync skills from the sixfourtwelve/skills clone"
 FISH
 }
 
@@ -1423,6 +1445,7 @@ ${C_BOLD}REPOS${C_RESET}
   repos add <owner/repo> [dest]
                             Add to the manifest and clone
   fonts                     Install fonts from the mono-lisa clone
+  skills                    Sync skills from the sixfourtwelve/skills clone
 
 ${C_BOLD}TOOLS${C_RESET}
   tools list                packages/tools vs what is on PATH
@@ -1477,6 +1500,7 @@ main() {
     repos)            cmd_repos "$@" ;;
     tools)            cmd_tools "$@" ;;
     fonts)            cmd_fonts ;;
+    skills)           cmd_skills ;;
     secret-scan)      cmd_secret_scan ;;
     completions)      cmd_completions ;;
     link)             cmd_link ;;

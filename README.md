@@ -161,7 +161,7 @@ git config --file ~/.config/git/work_config user.email "you@employer.com"
 place, with no redownload. The same applies to Ollama.app.
 
 **Private repos are cloned, not submoduled.** `packages/repos` lists
-`owner/repo [destination]`, defaulting to `~/Developer/<repo>`. They are
+`owner/repo [destination]`, defaulting to `~/Code/<repo>`. They are
 private and cloned over SSH, so `dot init` runs this *after* `gen-ssh-key`,
 and `dot repos clone` checks that GitHub actually accepts the key before it
 starts — otherwise each repo fails with a "Repository not found" that reads
