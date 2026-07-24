@@ -1098,13 +1098,27 @@ cmd_secret_scan() {
 # fish plugins, tmux TPM
 # ---------------------------------------------------------------------------
 
+# fisher itself comes from brew (packages/bundle), which drops it in fish's
+# vendor_functions.d. Do NOT let fisher install itself into ~/.config/fish and
+# do NOT commit functions/fisher.fish: those paths are stow symlinks into this
+# repo, and fisher refuses to install over files it did not create ("please
+# remove or move conflicting files first"). Its record of what it installed is
+# a universal variable in fish_variables, which is machine-local and gitignored,
+# so on a fresh machine that record is empty while the symlinks already exist —
+# the conflict would fire on every single init. Brew owns fisher; fisher owns
+# only the plugins listed in fish_plugins.
 install_fish_plugins() {
   have fish || { warn "fish not installed, skipping plugins"; return 0; }
-  [ -f "$HOME_DIR/.config/fish/fish_plugins" ] || return 0
+  # No fish_plugins file means no plugins declared — nothing for fisher to do.
+  # Check the live path, not $HOME_DIR: that is what fisher itself reads, and a
+  # tracked-but-unstowed file would otherwise pass this guard and then fail.
+  # (Note fisher rewrites this file, and deletes it outright when the last
+  # plugin is removed — through the stow symlink, taking the symlink with it.)
+  [ -f "$HOME/.config/fish/fish_plugins" ] || return 0
   step "Fish plugins"
   if ! fish -c 'type -q fisher' 2>/dev/null; then
     info "installing fisher"
-    run fish -c 'curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher'
+    run brew install fisher
   fi
   run fish -c 'fisher update' && ok "plugins installed"
 }
