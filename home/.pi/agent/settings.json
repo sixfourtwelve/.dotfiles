@@ -1,5 +1,5 @@
 {
-  "defaultModel": "gemma4:12b-mlx",
+  "defaultModel": "claude-opus-4-8",
   "subagents": {
     "defaultModel": "ornith:9b",
     "agentOverrides": {
@@ -55,7 +55,7 @@
       }
     }
   },
-  "defaultProvider": "ollama",
+  "defaultProvider": "pi-claude-cli",
   "defaultThinkingLevel": "high",
   "lastChangelogVersion": "0.82.0",
   "quietStartup": true,

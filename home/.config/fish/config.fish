@@ -16,3 +16,4 @@ set fish_greeting
 # Was commented out for as long as ~/.config/starship.toml has existed; the
 # formula is in packages/bundle now, so the configured prompt actually runs.
 starship init fish | source
+export PATH="$HOME/.local/bin:$PATH"
