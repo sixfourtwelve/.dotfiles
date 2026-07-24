@@ -1,5 +1,5 @@
 # Ghostty theme
-theme = Catppuccin Macchiato
+theme = Catppuccin Mocha
 
 # Updates
 auto-update-channel = tip
@@ -9,11 +9,10 @@ shell-integration = fish
 quit-after-last-window-closed = true
 
 # Font family
+font-family-italic = MonoLisa Nerd Font
+font-family-bold-italic = MonoLisa Nerd Font
+font-family-bold = MonoLisa Nerd Font
 font-family = MonoLisa Nerd Font
-font-style = Regular
-font-style-italic = Regular Italic
-font-style-bold = Bold
-font-style-bold-italic = Bold Italic
 
 # Font size
 font-size = 18

@@ -8,8 +8,9 @@ shell_mode = "auto"
 new_cwd = "follow"
 
 [theme]
-name = "tokyo-night"
+name = "catppuccin"
 
+auto_switch = false
 [update]
 channel = "stable"
 
