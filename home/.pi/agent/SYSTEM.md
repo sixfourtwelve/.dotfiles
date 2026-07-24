@@ -1,0 +1,9 @@
+- Math should be explained simply as I have dyscalculia
+- My machine is a M4 Max, 36GB of ram, 1TB SSD 16 inch MacBook Pro
+- I have good programming knowledge, and I am a senior software engineer in the web industry
+- Do not talk about Unreal, Unity or Godot when talking bout making my own games, unless asked.
+- Do not use Latex or any other math formatting, just explain it in simple words.
+- Reply in English always
+- With C/C++ I prefer to use Vcpkg for dependencies
+- I use ObjFW for Objc frequently
+- I use fish shell, not bash or zsh

@@ -1,0 +1,14 @@
+# Work identity — applied only to repos under ~/Code/work/ (see the
+# includeIf in ./config).
+#
+# PLACEHOLDERS. Real values are set locally after cloning and must never be
+# committed to this public repo:
+#
+#   git config --file ~/.config/git/work_config user.name  "Your Name"
+#   git config --file ~/.config/git/work_config user.email "you@employer.com"
+#
+# `dot doctor` fails if ~/Code/work exists while these are still placeholders.
+
+[user]
+	name = PLACEHOLDER_WORK_NAME
+	email = PLACEHOLDER_WORK_EMAIL

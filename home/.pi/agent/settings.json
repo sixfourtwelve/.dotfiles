@@ -1,0 +1,92 @@
+{
+  "defaultModel": "gemma4:12b-mlx",
+  "subagents": {
+    "defaultModel": "ornith:9b",
+    "agentOverrides": {
+      "planner": {
+        "model": "gemma4:26b-mlx",
+        "thinking": "high",
+        "fallbackModels": [
+          "anthropic/claude-sonnet-5"
+        ]
+      },
+      "oracle": {
+        "model": "gemma4:31b-mlx",
+        "thinking": "high",
+        "fallbackModels": [
+          "anthropic/claude-opus-4-8"
+        ]
+      },
+      "worker": {
+        "model": "ornith:9b",
+        "thinking": "low",
+        "fallbackModels": [
+          "anthropic/claude-sonnet-5",
+          "gemma4:26b-mlx"
+        ]
+      },
+      "reviewer": {
+        "model": "gemma4:31b-mlx",
+        "thinking": "high",
+        "fallbackModels": [
+          "anthropic/claude-opus-4-8"
+        ]
+      },
+      "researcher": {
+        "model": "gemma4:12b-mlx",
+        "thinking": "medium",
+        "fallbackModels": [
+          "anthropic/claude-sonnet-5"
+        ]
+      },
+      "scout": {
+        "model": "gemma4:e4b-mlx",
+        "thinking": "minimal",
+        "fallbackModels": [
+          "anthropic/claude-haiku-4-5"
+        ]
+      },
+      "delegate": {
+        "model": "gemma4:e4b-mlx",
+        "thinking": "low",
+        "fallbackModels": [
+          "anthropic/claude-haiku-4-5"
+        ]
+      }
+    }
+  },
+  "defaultProvider": "ollama",
+  "defaultThinkingLevel": "high",
+  "lastChangelogVersion": "0.82.0",
+  "quietStartup": true,
+  "theme": "kanso-zen",
+  "packages": [
+    "npm:@plannotator/pi-extension",
+    "npm:pi-subagents",
+    "npm:pi-web-access",
+    "npm:pi-image-preview",
+    "npm:pi-rewind",
+    "npm:pi-claude-code-tui",
+    "npm:@haispeed/pi-deck",
+    "npm:pi-voice-stt",
+    "npm:@feniix/pi-notion",
+    "npm:@alasano/pi-linear",
+    "npm:@narumitw/pi-caffeinate",
+    "npm:@narumitw/pi-btw",
+    "npm:@narumitw/pi-webui",
+    "npm:pi-thinking-steps",
+    "git:github.com/dmmulroy/pi-mcp",
+    "npm:pi-claude-cli"
+  ],
+  "hideThinkingBlock": true,
+  "piExecutor": {
+    "mode": "local",
+    "autoStart": true,
+    "remoteUrl": "",
+    "showFooterStatus": true,
+    "stopLocalOnShutdown": true
+  },
+  "warnings": {
+    "anthropicExtraUsage": false
+  }
+}

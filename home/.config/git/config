@@ -1,0 +1,49 @@
+# Personal git identity and defaults.
+#
+# This is the XDG config ($HOME/.config/git/config). There is deliberately no
+# ~/.gitconfig on this machine: git reads both, and ~/.gitconfig wins for any
+# single-valued key, which would silently shadow everything set here.
+#
+# Two includes at the bottom:
+#   work_config   personal/work split, placeholders until filled in locally
+#   local_config  machine-specific, untracked (the GPG signing key lives here)
+
+[user]
+	name = Ethan Morgan
+	email = ethan@gweithio.com
+
+[core]
+	editor = nvim
+	excludesfile = ~/.config/git/ignore
+
+[init]
+	defaultBranch = main
+
+[pull]
+	ff = only
+
+[push]
+	autoSetupRemote = true
+
+# The fish aliases gc/gca sign every commit, and gts signs tags. Both need a
+# key — `dot gen-gpg-key` creates one and records it in local_config.
+[commit]
+	gpgsign = true
+
+[tag]
+	gpgsign = true
+
+[gpg]
+	format = openpgp
+
+[alias]
+	l = log --oneline --graph --decorate
+
+# Work identity, for repos under ~/Code/work only.
+[includeIf "gitdir:~/Code/work/"]
+	path = work_config
+
+# Machine-specific overrides. Untracked and optional — git ignores a missing
+# include path, so a fresh clone works before `dot gen-gpg-key` has ever run.
+[include]
+	path = local_config

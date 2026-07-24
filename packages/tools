@@ -1,0 +1,20 @@
+# Tools installed by their own upstream script, not Homebrew.
+#
+# Format, one per line:
+#   <binary> <shell> <url>
+#
+# binary is what `dot tools install` looks for on PATH to decide whether the
+# tool is already there; shell is what the script is piped into (sh or bash,
+# whichever upstream documents); url is fetched with `curl -fsSL`.
+#
+# These are `curl | sh` installs, which means trusting the URL at install time
+# and on every re-run. That is upstream's only supported install path for both
+# of these — neither has a Homebrew formula worth using. Anything that *does*
+# have one belongs in `bundle`, not here.
+#
+# Both tools self-update once installed, so `dot tools install` is a
+# first-machine step, not an upgrade path: it skips anything already on PATH
+# unless you pass --force.
+
+claude  bash  https://claude.ai/install.sh
+pi      sh    https://pi.dev/install.sh

@@ -1,0 +1,12 @@
+{
+  "mcp": {
+    "toolMode": "proxy",
+    "startup": "lazy",
+    "servers": {
+      "executor": {
+        "type": "remote",
+        "url": "http://localhost:4789/mcp"
+      }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+gemma4:26b
+gemma4:12b
+gemma4:26b-mlx
+qwen3.5:9b-mlx
+qwen3-coder:30b
+north-mini-code-1.0:q4_K_M
+qwen3.6:27b
+gemma4:e4b
+lfm2.5:8b
+ornith:9b

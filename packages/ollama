@@ -1,0 +1,15 @@
+# Ollama model manifest — one model tag per line.
+#
+# `dot ollama sync` diffs `ollama list` against this file and pulls only what
+# is missing. It never removes a model that is installed but unlisted, so
+# scratch models you pull by hand are safe.
+#
+# These are large. A fresh machine pulls roughly 64 GB from this list; `dot
+# init` prints the estimate and asks before starting.
+
+ornith:9b
+gemma4:31b-mlx
+gemma4:26b-mlx
+gemma4:12b-mlx
+gemma4:e4b-mlx
+gemma4:e2b-mlx

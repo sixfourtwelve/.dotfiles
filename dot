@@ -1,0 +1,1476 @@
+#!/usr/bin/env bash
+#
+# dot — the dotfiles CLI.
+#
+# Everything under home/ is symlinked into $HOME by GNU Stow. Everything
+# installable is declared in packages/. This script is the only thing that
+# writes to either.
+#
+# Usage: dot <command> [args]   —   `dot help` for the full surface.
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Locate the repo, following the symlink if we were invoked via ~/.local/bin.
+# ---------------------------------------------------------------------------
+
+resolve_self() {
+  local src=${BASH_SOURCE[0]}
+  while [ -L "$src" ]; do
+    local dir
+    dir=$(cd -P "$(dirname "$src")" && pwd)
+    src=$(readlink "$src")
+    [[ $src != /* ]] && src=$dir/$src
+  done
+  cd -P "$(dirname "$src")" && pwd
+}
+
+DOTFILES_DIR=${DOTFILES_DIR:-$(resolve_self)}
+HOME_DIR=$DOTFILES_DIR/home
+PACKAGES_DIR=$DOTFILES_DIR/packages
+STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/dot
+FAILURES_FILE=$STATE_DIR/failures
+
+DRY_RUN=false
+WORK_MACHINE=false
+SKIP_SSH=false
+SKIP_GPG=false
+SKIP_OLLAMA=false
+SKIP_CASKS=false
+SKIP_REPOS=false
+SKIP_TOOLS=false
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_RESET=$'\033[0m'; C_RED=$'\033[31m'; C_GREEN=$'\033[32m'
+  C_YELLOW=$'\033[33m'; C_BLUE=$'\033[34m'; C_DIM=$'\033[2m'; C_BOLD=$'\033[1m'
+else
+  C_RESET=''; C_RED=''; C_GREEN=''; C_YELLOW=''; C_BLUE=''; C_DIM=''; C_BOLD=''
+fi
+
+info()  { printf '%s==>%s %s\n' "$C_BLUE" "$C_RESET" "$*"; }
+ok()    { printf '%s  ok%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+warn()  { printf '%swarn%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
+err()   { printf '%sfail%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; }
+step()  { printf '\n%s%s%s\n' "$C_BOLD" "$*" "$C_RESET"; }
+dim()   { printf '%s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
+
+die() { err "$*"; exit 1; }
+
+# Run a command, or describe it under --dry-run.
+run() {
+  if [ "$DRY_RUN" = true ]; then
+    dim "would run: $*"
+    return 0
+  fi
+  "$@"
+}
+
+confirm() {
+  local prompt=$1
+  [ "$DRY_RUN" = true ] && { dim "would ask: $prompt"; return 0; }
+  [ ! -t 0 ] && { warn "not a tty, assuming no: $prompt"; return 1; }
+  local reply
+  read -r -p "$prompt [y/N] " reply
+  [[ $reply =~ ^[Yy]$ ]]
+}
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# Record a step that failed so `dot retry-failed` can pick it up, but keep
+# going — one broken package should not abort a 20-minute init.
+record_failure() {
+  mkdir -p "$STATE_DIR"
+  printf '%s\n' "$1" >> "$FAILURES_FILE"
+  err "$1 — recorded, continuing (dot retry-failed)"
+}
+
+try_step() {
+  local name=$1; shift
+  if "$@"; then
+    return 0
+  fi
+  record_failure "$name"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Package manifest helpers
+# ---------------------------------------------------------------------------
+
+bundle_path() {
+  case ${1:-base} in
+    base) printf '%s\n' "$PACKAGES_DIR/bundle" ;;
+    work) printf '%s\n' "$PACKAGES_DIR/bundle.work" ;;
+    *) die "unknown bundle '$1' (expected: base, work)" ;;
+  esac
+}
+
+# Entries of one kind from a bundle, e.g. `manifest_entries brew base`.
+manifest_entries() {
+  local kind=$1 bundle=$2 file
+  file=$(bundle_path "$bundle")
+  [ -f "$file" ] || return 0
+  sed -n "s/^[[:space:]]*${kind}[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$file"
+}
+
+# Is this token a formula, a cask, or neither?
+classify_package() {
+  local token=$1
+  if brew info --formula "$token" >/dev/null 2>&1; then
+    printf 'brew\n'
+  elif brew info --cask "$token" >/dev/null 2>&1; then
+    printf 'cask\n'
+  else
+    return 1
+  fi
+}
+
+package_installed() {
+  local kind=$1 token=$2
+  case $kind in
+    brew) brew list --formula --versions "$token" >/dev/null 2>&1 ;;
+    cask) brew list --cask --versions "$token" >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Insert a `kind "token"` line into a bundle, alphabetically within its block.
+manifest_insert() {
+  local kind=$1 token=$2 file=$3 tmp
+  tmp=$(mktemp)
+  awk -v kind="$kind" -v token="$token" '
+    BEGIN { inserted = 0 }
+    {
+      if (!inserted && $0 ~ "^[[:space:]]*" kind "[[:space:]]+\"") {
+        match($0, /"[^"]*"/)
+        existing = substr($0, RSTART + 1, RLENGTH - 2)
+        if (existing > token) {
+          print kind " \"" token "\""
+          inserted = 1
+        }
+      }
+      print
+    }
+    END { if (!inserted) print kind " \"" token "\"" }
+  ' "$file" > "$tmp"
+  mv "$tmp" "$file"
+}
+
+manifest_remove() {
+  local kind=$1 token=$2 file=$3 tmp
+  tmp=$(mktemp)
+  grep -v "^[[:space:]]*${kind}[[:space:]]*\"${token}\"" "$file" > "$tmp" || true
+  mv "$tmp" "$file"
+}
+
+# ---------------------------------------------------------------------------
+# dot stow
+# ---------------------------------------------------------------------------
+
+cmd_stow() {
+  have stow || die "stow is not installed — brew install stow"
+  [ -d "$HOME_DIR" ] || die "no home/ directory at $HOME_DIR"
+
+  step "Stowing home/ into $HOME"
+
+  # --no-folding is essential, not a style choice. Without it, stow symlinks a
+  # whole directory into the repo whenever the target does not already exist —
+  # so on a fresh machine ~/.claude becomes a link into home/.claude, and the
+  # app's projects/, plugins/ and history (gigabytes) get written inside the
+  # repo. With it, directories are real and only files are linked, so this
+  # behaves identically on a fresh machine and on one with existing config.
+  local flags=(--dir "$DOTFILES_DIR" --target "$HOME" --restow --no-folding)
+  [ "$DRY_RUN" = true ] && flags+=(--no --verbose)
+
+  if stow "${flags[@]}" home; then
+    ok "symlinks up to date"
+  else
+    die "stow reported a conflict — resolve it, then re-run 'dot stow'
+
+A conflict means a real file exists in \$HOME where a symlink belongs.
+Move it into $HOME_DIR (do not copy — stow fails the same way on a copy)."
+  fi
+}
+
+cmd_unstow() {
+  have stow || die "stow is not installed"
+  step "Removing home/ symlinks from $HOME"
+  run stow --dir "$DOTFILES_DIR" --target "$HOME" --delete --no-folding home
+  ok "unstowed"
+}
+
+# A fresh mac logs in to zsh, so without this every fish config in the repo is
+# inert and none of it is obvious — the prompt just looks wrong.
+set_login_shell() {
+  local fish_path=/opt/homebrew/bin/fish
+  [ -x "$fish_path" ] || return 0
+  case ${SHELL:-} in *fish) ok "fish is already the login shell"; return 0 ;; esac
+
+  step "Login shell"
+  warn "login shell is ${SHELL:-unknown}, not fish — the fish config is inert"
+  confirm "make fish the login shell? (needs sudo to edit /etc/shells)" || {
+    dim "skipped — run 'chsh -s $fish_path' yourself later"
+    return 0
+  }
+  if ! grep -qxF "$fish_path" /etc/shells 2>/dev/null; then
+    run sudo sh -c "printf '%s\n' '$fish_path' >> /etc/shells"
+  fi
+  run chsh -s "$fish_path"
+  ok "login shell set — open a new terminal for it to take effect"
+}
+
+# ---------------------------------------------------------------------------
+# dot package / check-packages
+# ---------------------------------------------------------------------------
+
+cmd_package() {
+  local action=${1:-list}; shift || true
+  case $action in
+    add)    package_add "$@" ;;
+    remove) package_remove "$@" ;;
+    update) package_update "$@" ;;
+    list)   package_list "$@" ;;
+    *) die "unknown: dot package $action (expected: add, remove, update, list)" ;;
+  esac
+}
+
+package_add() {
+  local token=${1:-} kind='' bundle=base
+  [ -n "$token" ] || die "usage: dot package add <name> [brew|cask] [base|work]"
+  shift
+
+  # Both trailing args are optional and order-independent.
+  local arg
+  for arg in "$@"; do
+    case $arg in
+      brew|cask) kind=$arg ;;
+      base|work) bundle=$arg ;;
+      *) die "unexpected argument '$arg'" ;;
+    esac
+  done
+
+  have brew || die "homebrew is not installed"
+
+  if [ -z "$kind" ]; then
+    info "resolving '$token' against homebrew"
+    kind=$(classify_package "$token") \
+      || die "'$token' is neither a formula nor a cask — check the token"
+    ok "$token is a $kind"
+  fi
+
+  local file; file=$(bundle_path "$bundle")
+  if grep -q "^[[:space:]]*${kind}[[:space:]]*\"${token}\"" "$file"; then
+    warn "$token already in $(basename "$file")"
+  else
+    run manifest_insert "$kind" "$token" "$file"
+    ok "added $kind \"$token\" to $(basename "$file")"
+  fi
+
+  if package_installed "$kind" "$token"; then
+    ok "$token already installed"
+  else
+    info "installing $token"
+    if [ "$kind" = cask ]; then
+      run brew install --cask "$token"
+    else
+      run brew install "$token"
+    fi
+  fi
+}
+
+package_remove() {
+  local token=${1:-} bundle=${2:-base}
+  [ -n "$token" ] || die "usage: dot package remove <name> [base|work]"
+  local file; file=$(bundle_path "$bundle")
+
+  local kind found=false
+  for kind in brew cask; do
+    if grep -q "^[[:space:]]*${kind}[[:space:]]*\"${token}\"" "$file"; then
+      run manifest_remove "$kind" "$token" "$file"
+      ok "removed $kind \"$token\" from $(basename "$file")"
+      found=true
+    fi
+  done
+  [ "$found" = true ] || die "$token not found in $(basename "$file")"
+
+  # Uninstalling is a separate, explicit decision — the manifest is the
+  # source of truth, but nothing here removes software behind your back.
+  dim "left installed on this machine; 'brew uninstall $token' to remove it"
+}
+
+package_update() {
+  have brew || die "homebrew is not installed"
+  step "Updating homebrew packages"
+  run brew update
+  run brew upgrade
+  [ "$SKIP_CASKS" = true ] || run brew upgrade --cask --greedy
+  ok "packages up to date"
+}
+
+package_list() {
+  local bundle
+  for bundle in base work; do
+    local file; file=$(bundle_path "$bundle")
+    [ -f "$file" ] || continue
+    step "$(basename "$file")"
+    local kind token
+    for kind in brew cask; do
+      while IFS= read -r token; do
+        [ -n "$token" ] || continue
+        printf '  %-6s %s\n' "$kind" "$token"
+      done < <(manifest_entries "$kind" "$bundle")
+    done
+  done
+}
+
+cmd_check_packages() {
+  have brew || die "homebrew is not installed"
+  local missing_total=0 bundle kind token
+
+  for bundle in base work; do
+    local file; file=$(bundle_path "$bundle")
+    [ -f "$file" ] || continue
+    step "$(basename "$file")"
+    local installed=0 missing=0
+    for kind in brew cask; do
+      while IFS= read -r token; do
+        [ -n "$token" ] || continue
+        if package_installed "$kind" "$token"; then
+          installed=$((installed + 1))
+        else
+          printf '  %smissing%s %-6s %s\n' "$C_YELLOW" "$C_RESET" "$kind" "$token"
+          missing=$((missing + 1))
+        fi
+      done < <(manifest_entries "$kind" "$bundle")
+    done
+    printf '  %d installed, %d missing\n' "$installed" "$missing"
+    missing_total=$((missing_total + missing))
+  done
+
+  if [ "$missing_total" -gt 0 ]; then
+    printf '\n'
+    dim "run 'dot init' (or 'brew bundle --file $PACKAGES_DIR/bundle') to install"
+    return 1
+  fi
+  ok "everything in the manifests is installed"
+}
+
+install_bundles() {
+  have brew || die "homebrew is not installed"
+  local flags=()
+  [ "$SKIP_CASKS" = true ] && flags+=(--no-upgrade)
+
+  # Adopt rather than collide. Without this, a cask whose app was installed
+  # by hand into /Applications aborts with "It seems there is already an App
+  # at ...". --adopt takes the existing app under brew management in place,
+  # with no redownload — the common case on a machine that predates this repo.
+  export HOMEBREW_CASK_OPTS="${HOMEBREW_CASK_OPTS:-} --adopt"
+
+  step "Installing base bundle"
+  if [ "$SKIP_CASKS" = true ]; then
+    # brew bundle has no --formulae-only, so filter the manifest ourselves.
+    local tmp; tmp=$(mktemp)
+    grep -v '^[[:space:]]*cask' "$PACKAGES_DIR/bundle" > "$tmp"
+    run brew bundle --file "$tmp" "${flags[@]}"
+    rm -f "$tmp"
+  else
+    run brew bundle --file "$PACKAGES_DIR/bundle"
+  fi
+
+  if [ "$WORK_MACHINE" = true ]; then
+    step "Installing work bundle"
+    run brew bundle --file "$PACKAGES_DIR/bundle.work"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# dot gen-ssh-key
+# ---------------------------------------------------------------------------
+
+cmd_gen_ssh_key() {
+  local force=false
+  [ "${1:-}" = "--force" ] && force=true
+
+  local key=$HOME/.ssh/id_ed25519
+  step "SSH key"
+
+  if [ -f "$key" ] && [ "$force" = false ]; then
+    ok "$key already exists — leaving it alone (--force to regenerate)"
+  else
+    [ -f "$key" ] && warn "--force given: overwriting $key"
+    local comment=${GIT_EMAIL:-$(git config --global user.email 2>/dev/null || printf '%s@%s' "$USER" "$(hostname -s)")}
+    run mkdir -p "$HOME/.ssh"
+    run chmod 700 "$HOME/.ssh"
+    run ssh-keygen -t ed25519 -C "$comment" -f "$key"
+    ok "generated $key"
+  fi
+
+  run eval "\$(ssh-agent -s)" >/dev/null 2>&1 || true
+  run ssh-add --apple-use-keychain "$key" 2>/dev/null || run ssh-add "$key" || \
+    warn "could not add key to ssh-agent"
+
+  if have gh && gh auth status >/dev/null 2>&1; then
+    local title; title="$(hostname -s) ($(date +%Y-%m-%d))"
+    if gh ssh-key list 2>/dev/null | grep -qF "$(cut -d' ' -f2 < "$key.pub" 2>/dev/null || echo '__none__')"; then
+      ok "key already registered with github"
+    else
+      if run gh ssh-key add "$key.pub" --title "$title"; then
+        ok "uploaded to github"
+      else
+        warn "gh ssh-key add failed — add $key.pub manually"
+      fi
+    fi
+  else
+    warn "gh not authenticated — add $key.pub to github manually"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# dot gen-gpg-key
+# ---------------------------------------------------------------------------
+
+cmd_gen_gpg_key() {
+  have gpg || die "gnupg is not installed — brew install gnupg"
+  step "GPG signing key"
+
+  local name email
+  name=$(git config --global user.name 2>/dev/null || printf '%s' "$USER")
+  email=$(git config --global user.email 2>/dev/null || printf '%s@%s' "$USER" "$(hostname -s)")
+
+  local existing
+  existing=$(gpg --list-secret-keys --keyid-format=long "$email" 2>/dev/null \
+    | sed -n 's/^ *sec *[^/]*\/\([A-F0-9]*\).*/\1/p' | head -1) || true
+
+  if [ -n "$existing" ]; then
+    ok "existing secret key $existing for $email — reusing it"
+  else
+    info "generating ed25519 key for $name <$email>"
+    if [ "$DRY_RUN" = true ]; then
+      dim "would run: gpg --quick-generate-key '$name <$email>' ed25519 sign 2y"
+      existing=PLACEHOLDER
+    else
+      gpg --quick-generate-key "$name <$email>" ed25519 sign 2y
+      existing=$(gpg --list-secret-keys --keyid-format=long "$email" \
+        | sed -n 's/^ *sec *[^/]*\/\([A-F0-9]*\).*/\1/p' | head -1)
+      [ -n "$existing" ] || die "key generation reported success but no key found"
+      ok "generated $existing"
+    fi
+  fi
+
+  # pinentry-mac, so the passphrase prompt works from a GUI terminal too.
+  if have pinentry-mac; then
+    local agent_conf=$HOME/.gnupg/gpg-agent.conf
+    run mkdir -p "$HOME/.gnupg"
+    run chmod 700 "$HOME/.gnupg"
+    if [ "$DRY_RUN" = false ] && ! grep -qs pinentry-mac "$agent_conf" 2>/dev/null; then
+      printf 'pinentry-program %s\n' "$(command -v pinentry-mac)" >> "$agent_conf"
+      gpgconf --kill gpg-agent 2>/dev/null || true
+      ok "wired pinentry-mac"
+    fi
+  else
+    warn "pinentry-mac not installed — GUI passphrase prompts will not work"
+  fi
+
+  # The key id goes in the untracked local_config, not the tracked config:
+  # it names a key that exists on this machine only, and a fresh clone that
+  # inherited it would fail every signed commit with a confusing error.
+  step "Configuring git to sign"
+  local local_config=$HOME/.config/git/local_config
+  if [ "$DRY_RUN" = true ]; then
+    dim "would set user.signingkey=$existing in $local_config"
+  else
+    mkdir -p "$(dirname "$local_config")"
+    git config --file "$local_config" user.signingkey "$existing"
+    ok "user.signingkey=$existing (in local_config, untracked)"
+  fi
+  dim "commit.gpgsign and gpg.format are already set in the tracked config"
+
+  if have gh && gh auth status >/dev/null 2>&1 && [ "$DRY_RUN" = false ]; then
+    local pub; pub=$(mktemp)
+    gpg --armor --export "$existing" > "$pub"
+    if gh gpg-key add "$pub" --title "$(hostname -s)" 2>/dev/null; then
+      ok "uploaded public key to github"
+    else
+      warn "gh gpg-key add failed — upload this manually:"
+      dim "  gpg --armor --export $existing | pbcopy"
+    fi
+    rm -f "$pub"
+  else
+    warn "gh not authenticated — upload the public key manually:"
+    dim "  gpg --armor --export $existing | pbcopy"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# dot ollama
+# ---------------------------------------------------------------------------
+
+ollama_manifest_models() {
+  [ -f "$PACKAGES_DIR/ollama" ] || return 0
+  grep -v '^[[:space:]]*#' "$PACKAGES_DIR/ollama" | grep -v '^[[:space:]]*$' || true
+}
+
+ollama_installed_models() {
+  ollama list 2>/dev/null | awk 'NR > 1 { print $1 }' || true
+}
+
+cmd_ollama() {
+  local action=${1:-list}; shift || true
+  have ollama || die "ollama is not installed"
+  case $action in
+    list) ollama_cmd_list ;;
+    pull) ollama_cmd_pull "$@" ;;
+    sync) ollama_cmd_sync ;;
+    *) die "unknown: dot ollama $action (expected: list, pull, sync)" ;;
+  esac
+}
+
+ollama_cmd_list() {
+  step "Manifest ($PACKAGES_DIR/ollama)"
+  local installed model
+  installed=$(ollama_installed_models)
+  while IFS= read -r model; do
+    [ -n "$model" ] || continue
+    if printf '%s\n' "$installed" | grep -qxF "$model"; then
+      printf '  %sok%s      %s\n' "$C_GREEN" "$C_RESET" "$model"
+    else
+      printf '  %smissing%s %s\n' "$C_YELLOW" "$C_RESET" "$model"
+    fi
+  done < <(ollama_manifest_models)
+
+  # Models present but undeclared — informational, never auto-removed.
+  local extra=false
+  while IFS= read -r model; do
+    [ -n "$model" ] || continue
+    if ! ollama_manifest_models | grep -qxF "$model"; then
+      [ "$extra" = false ] && { step "Installed but not in the manifest"; extra=true; }
+      printf '  %s-%s       %s\n' "$C_DIM" "$C_RESET" "$model"
+    fi
+  done < <(printf '%s\n' "$installed")
+  [ "$extra" = true ] && dim "add with: dot ollama pull <model>"
+  return 0
+}
+
+ollama_cmd_pull() {
+  local model=${1:-}
+  [ -n "$model" ] || die "usage: dot ollama pull <model>"
+  run ollama pull "$model"
+  if ollama_manifest_models | grep -qxF "$model"; then
+    ok "$model already in the manifest"
+  else
+    [ "$DRY_RUN" = true ] && { dim "would add $model to the manifest"; return 0; }
+    printf '%s\n' "$model" >> "$PACKAGES_DIR/ollama"
+    ok "added $model to the manifest"
+  fi
+}
+
+ollama_cmd_sync() {
+  step "Syncing ollama models against the manifest"
+  local installed missing=() model
+  installed=$(ollama_installed_models)
+  while IFS= read -r model; do
+    [ -n "$model" ] || continue
+    printf '%s\n' "$installed" | grep -qxF "$model" || missing+=("$model")
+  done < <(ollama_manifest_models)
+
+  if [ ${#missing[@]} -eq 0 ]; then
+    ok "all manifest models present — nothing to pull"
+    return 0
+  fi
+
+  printf '  %d model(s) missing:\n' "${#missing[@]}"
+  printf '    %s\n' "${missing[@]}"
+  warn "these are large — expect tens of gigabytes"
+  if confirm "pull ${#missing[@]} missing model(s) now?"; then
+    for model in "${missing[@]}"; do
+      try_step "ollama pull $model" run ollama pull "$model"
+    done
+    ok "sync complete"
+  else
+    dim "skipped — run 'dot ollama sync' when you are ready"
+  fi
+}
+
+# Bring an existing Ollama.app under brew management.
+#
+# Note /usr/local/bin/ollama is NOT a second install — it is a symlink the
+# app creates into its own bundle. Deleting it just breaks the CLI while the
+# app keeps running, so this adopts rather than removes: no server restart,
+# no re-download, and ~/.ollama/models is never touched.
+migrate_ollama_to_cask() {
+  brew list --cask --versions ollama-app >/dev/null 2>&1 && return 0
+  [ -d /Applications/Ollama.app ] || return 0
+
+  step "Adopting Ollama.app into homebrew"
+  dim "adopt-in-place: the app, its models and the running server are left alone"
+
+  confirm "bring /Applications/Ollama.app under the ollama-app cask?" || {
+    dim "skipped — packages/ollama still declares the models"
+    return 0
+  }
+
+  run brew install --cask --adopt ollama-app
+
+  if [ "$DRY_RUN" = false ]; then
+    hash -r
+    local resolved; resolved=$(command -v ollama || true)
+    case $resolved in
+      /opt/homebrew/*) ok "ollama resolves to $resolved" ;;
+      '') err "ollama is not on PATH after adoption" ;;
+      *) warn "ollama resolves to $resolved — expected a homebrew path" ;;
+    esac
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# dot repos — private repositories, cloned over SSH
+# ---------------------------------------------------------------------------
+
+REPOS_DIR=${REPOS_DIR:-$HOME/Developer}
+
+repos_manifest() {
+  [ -f "$PACKAGES_DIR/repos" ] || return 0
+  grep -v '^[[:space:]]*#' "$PACKAGES_DIR/repos" | grep -v '^[[:space:]]*$' || true
+}
+
+# GitHub never grants a shell, so a working key exits 1 with a greeting. The
+# exit code is useless here; the message is the signal.
+github_ssh_ready() {
+  local out
+  out=$(ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1) || true
+  [[ $out == *"successfully authenticated"* ]]
+}
+
+# "owner/repo [dest]" -> absolute destination path
+repo_dest() {
+  local slug=$1 dest=$2
+  if [ -n "$dest" ]; then
+    case $dest in
+      /*) printf '%s\n' "$dest" ;;
+      ~/*) printf '%s\n' "$HOME/${dest#\~/}" ;;
+      *) printf '%s\n' "$REPOS_DIR/$dest" ;;
+    esac
+  else
+    printf '%s\n' "$REPOS_DIR/${slug#*/}"
+  fi
+}
+
+# Cloning the font repo does not install anything — macOS only loads fonts
+# from ~/Library/Fonts. MonoLisa is commercial, so it lives in a private repo
+# and is copied out of the clone rather than tracked here.
+cmd_fonts() {
+  local dest=$HOME/Library/Fonts
+  local src=$REPOS_DIR/mono-lisa
+
+  step "Fonts"
+  if [ ! -d "$src" ]; then
+    warn "no font repo at ${src/#$HOME/\~} — run 'dot repos clone' first"
+    return 0
+  fi
+
+  run mkdir -p "$dest"
+  local installed=0 skipped=0 f
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if [ -e "$dest/$(basename "$f")" ]; then
+      skipped=$((skipped + 1))
+    else
+      run cp "$f" "$dest/" && installed=$((installed + 1))
+    fi
+  done < <(find "$src" \( -name '*.ttf' -o -name '*.otf' \) 2>/dev/null)
+
+  ok "$installed installed, $skipped already present"
+}
+
+cmd_repos() {
+  local action=${1:-list}; shift || true
+  case $action in
+    list)  repos_list ;;
+    clone) repos_clone ;;
+    add)   repos_add "$@" ;;
+    *) die "unknown: dot repos $action (expected: list, clone, add)" ;;
+  esac
+}
+
+repos_list() {
+  step "Private repos ($PACKAGES_DIR/repos)"
+  local slug dest path
+  while read -r slug dest; do
+    [ -n "$slug" ] || continue
+    path=$(repo_dest "$slug" "$dest")
+    if [ -d "$path/.git" ]; then
+      printf '  %s✓%s %-40s %s\n' "$C_GREEN" "$C_RESET" "$slug" "${path/#$HOME/\~}"
+    else
+      printf '  %s·%s %-40s %s\n' "$C_YELLOW" "$C_RESET" "$slug" "${path/#$HOME/\~} (not cloned)"
+    fi
+  done < <(repos_manifest)
+}
+
+repos_clone() {
+  step "Cloning private repos"
+
+  local pending=() slug dest path
+  while read -r slug dest; do
+    [ -n "$slug" ] || continue
+    path=$(repo_dest "$slug" "$dest")
+    [ -d "$path/.git" ] || pending+=("$slug|$path")
+  done < <(repos_manifest)
+
+  if [ ${#pending[@]} -eq 0 ]; then
+    ok "every repo in the manifest is already cloned"
+    return 0
+  fi
+
+  # Check once, up front. Without this each private repo fails with its own
+  # opaque "Repository not found", which reads like the repo is gone rather
+  # than like the key was never registered.
+  if [ "$DRY_RUN" = false ] && ! github_ssh_ready; then
+    warn "GitHub is not accepting this machine's SSH key yet"
+    dim "these are private repos, so cloning cannot work until it does:"
+    dim "  dot gen-ssh-key     generate and upload a key"
+    dim "  gh auth login       if 'gh' could not upload it for you"
+    dim "then: dot repos clone"
+    return 1
+  fi
+
+  local entry
+  for entry in "${pending[@]}"; do
+    slug=${entry%%|*}
+    path=${entry#*|}
+    info "cloning $slug -> ${path/#$HOME/\~}"
+    run mkdir -p "$(dirname "$path")"
+    try_step "clone $slug" run git clone "git@github.com:$slug.git" "$path"
+  done
+  ok "done"
+}
+
+repos_add() {
+  local slug=${1:-} dest=${2:-}
+  [ -n "$slug" ] || die "usage: dot repos add <owner/repo> [destination]"
+  [[ $slug == */* ]] || die "expected owner/repo, got '$slug'"
+
+  if repos_manifest | awk '{print $1}' | grep -qxF "$slug"; then
+    warn "$slug already in the manifest"
+  else
+    [ "$DRY_RUN" = true ] && { dim "would add $slug to the manifest"; return 0; }
+    printf '%s %s\n' "$slug" "$dest" | sed 's/[[:space:]]*$//' >> "$PACKAGES_DIR/repos"
+    ok "added $slug"
+  fi
+
+  local path; path=$(repo_dest "$slug" "$dest")
+  if [ -d "$path/.git" ]; then
+    ok "already cloned at ${path/#$HOME/\~}"
+  else
+    run mkdir -p "$(dirname "$path")"
+    run git clone "git@github.com:$slug.git" "$path"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# dot tools — things installed by an upstream `curl | sh`, not Homebrew
+# ---------------------------------------------------------------------------
+
+tools_manifest() {
+  [ -f "$PACKAGES_DIR/tools" ] || return 0
+  grep -v '^[[:space:]]*#' "$PACKAGES_DIR/tools" | grep -v '^[[:space:]]*$' || true
+}
+
+cmd_tools() {
+  local action=${1:-list}; shift || true
+  case $action in
+    list)    tools_list ;;
+    install) tools_install "$@" ;;
+    *) die "unknown: dot tools $action (expected: list, install)" ;;
+  esac
+}
+
+tools_list() {
+  step "Upstream tools ($PACKAGES_DIR/tools)"
+  local bin shell url
+  while read -r bin shell url; do
+    [ -n "$bin" ] || continue
+    if have "$bin"; then
+      printf '  %s✓%s %-10s %s\n' "$C_GREEN" "$C_RESET" "$bin" "$(command -v "$bin")"
+    else
+      printf '  %s·%s %-10s %s\n' "$C_YELLOW" "$C_RESET" "$bin" "$url (not installed)"
+    fi
+  done < <(tools_manifest)
+}
+
+# Idempotent: a tool already on PATH is left alone, however it got there.
+# `pi`, for instance, is a global npm package on this machine and lives in
+# Homebrew's node prefix, not where the installer would have put it — that is
+# still a working `pi` and reinstalling over it would only cause a second copy.
+tools_install() {
+  local force=false only=() arg
+  for arg in "$@"; do
+    case $arg in
+      --force) force=true ;;
+      -*) die "unknown flag '$arg' — see 'dot help'" ;;
+      *) only+=("$arg") ;;
+    esac
+  done
+
+  step "Upstream tools"
+  have curl || { err "curl is not available"; return 1; }
+
+  local bin shell url installed=0 skipped=0 matched=0
+  while read -r bin shell url; do
+    [ -n "$bin" ] || continue
+    if [ ${#only[@]} -gt 0 ] && ! printf '%s\n' "${only[@]}" | grep -qxF "$bin"; then
+      continue
+    fi
+    matched=$((matched + 1))
+
+    case $shell in
+      sh|bash) ;;
+      *) warn "$bin: '$shell' is not a shell this understands — skipping"; continue ;;
+    esac
+
+    if have "$bin" && [ "$force" = false ]; then
+      ok "$bin already installed ($(command -v "$bin"))"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    info "installing $bin from $url"
+    # stdin is /dev/null because the loop is reading the manifest on the shell's
+    # stdin — an installer that reads from it would eat the remaining entries.
+    # The url and shell go in as arguments rather than interpolated into the
+    # -c string, so a manifest line cannot smuggle in a second command.
+    if run bash -c 'set -o pipefail; curl -fsSL "$1" | "$2"' _ "$url" "$shell" </dev/null; then
+      ok "installed $bin"
+      installed=$((installed + 1))
+    else
+      record_failure "tool $bin"
+    fi
+  done < <(tools_manifest)
+
+  if [ ${#only[@]} -gt 0 ] && [ "$matched" -eq 0 ]; then
+    err "no manifest entry for: ${only[*]}"
+    return 1
+  fi
+
+  # An installer that drops its binary in ~/.local/bin is invisible to the
+  # shell that just ran it, so "installed" and "not on PATH" are both true
+  # until the next login. Say so rather than looking like it failed.
+  if [ "$installed" -gt 0 ]; then
+    ok "$installed installed, $skipped already present"
+    dim "open a new shell if a freshly installed tool is not found yet"
+  else
+    ok "$skipped already present, nothing to install"
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# dot doctor
+# ---------------------------------------------------------------------------
+
+DOCTOR_FAILURES=0
+DOCTOR_WARNINGS=0
+
+check_ok()   { printf '  %s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+check_warn() { printf '  %s!%s %s\n' "$C_YELLOW" "$C_RESET" "$*"; DOCTOR_WARNINGS=$((DOCTOR_WARNINGS + 1)); }
+check_fail() { printf '  %s✗%s %s\n' "$C_RED" "$C_RESET" "$*"; DOCTOR_FAILURES=$((DOCTOR_FAILURES + 1)); }
+
+cmd_doctor() {
+  DOCTOR_FAILURES=0
+  DOCTOR_WARNINGS=0
+
+  step "Homebrew"
+  if have brew; then
+    check_ok "brew $(brew --version | head -1 | awk '{print $2}')"
+  else
+    check_fail "homebrew not installed"
+  fi
+
+  step "Tools on PATH"
+  local tool
+  for tool in stow fish git gh nvim tmux rg fd jq starship zoxide direnv; do
+    if have "$tool"; then
+      check_ok "$tool"
+    else
+      check_warn "$tool not on PATH (declared in packages/bundle)"
+    fi
+  done
+
+  step "Symlinks"
+  local broken=0 link
+  while IFS= read -r link; do
+    broken=$((broken + 1))
+    check_fail "broken symlink: ${link/#$HOME/\~}"
+  done < <(find "$HOME" -maxdepth 4 -type l ! -exec test -e {} \; -print 2>/dev/null \
+    | grep -E "\.dotfiles|\.config|\.claude|\.pi|\.agents" || true)
+  [ "$broken" -eq 0 ] && check_ok "no broken symlinks in tracked paths"
+
+  # The invariant is "the $HOME path resolves to the repo copy", not "the
+  # $HOME path is itself a symlink" — stow folds whole directories, so files
+  # under a symlinked directory are reached through it and are plain files.
+  local unstowed=0 f target
+  while IFS= read -r f; do
+    target=$HOME/${f#"$HOME_DIR"/}
+    if [ ! -e "$target" ]; then
+      check_warn "missing in \$HOME: ${target/#$HOME/\~}"
+      unstowed=$((unstowed + 1))
+    elif [ "$(readlink -f "$target")" != "$(readlink -f "$f")" ]; then
+      check_warn "shadowed by a real file: ${target/#$HOME/\~}"
+      unstowed=$((unstowed + 1))
+    fi
+  done < <(find "$HOME_DIR" -type f 2>/dev/null)
+  [ "$unstowed" -eq 0 ] && check_ok "every tracked file resolves into the repo"
+
+  step "SSH"
+  if [ -f "$HOME/.ssh/id_ed25519" ]; then
+    check_ok "id_ed25519 present"
+  else
+    check_fail "no ~/.ssh/id_ed25519 — run 'dot gen-ssh-key'"
+  fi
+
+  step "GPG signing"
+  if have gpg && [ -n "$(gpg --list-secret-keys 2>/dev/null)" ]; then
+    check_ok "secret key present"
+    # Not --global: identity lives in the XDG file plus an untracked
+    # local_config, and --global only ever reads ~/.gitconfig.
+    local signkey gpgsign
+    signkey=$(git config --get user.signingkey 2>/dev/null || true)
+    gpgsign=$(git config --get commit.gpgsign 2>/dev/null || true)
+    if [ -n "$signkey" ]; then
+      check_ok "user.signingkey=$signkey"
+    else
+      check_fail "git has no user.signingkey — run 'dot gen-gpg-key'"
+    fi
+    if [ "$gpgsign" = true ]; then
+      check_ok "commit.gpgsign=true"
+    else
+      check_fail "commit.gpgsign is not true, but 'gc' aliases git commit -S"
+    fi
+  else
+    check_fail "no GPG secret key — 'gc' (git commit -S) will fail. Run 'dot gen-gpg-key'"
+  fi
+
+  step "ollama"
+  if have ollama; then
+    check_ok "ollama at $(command -v ollama)"
+    # Two paths are fine if they are symlinks onto the same bundle — that is
+    # the normal state once the cask is adopted. Only distinct files are a bug.
+    if [ -e /usr/local/bin/ollama ] && [ -e /opt/homebrew/bin/ollama ]; then
+      if [ "$(readlink -f /usr/local/bin/ollama)" = "$(readlink -f /opt/homebrew/bin/ollama)" ]; then
+        check_ok "both ollama paths resolve to the same binary"
+      else
+        check_fail "two distinct ollama binaries: /usr/local/bin and /opt/homebrew/bin"
+      fi
+    fi
+    local missing_models=0 model installed
+    installed=$(ollama_installed_models)
+    while IFS= read -r model; do
+      [ -n "$model" ] || continue
+      printf '%s\n' "$installed" | grep -qxF "$model" || {
+        check_warn "model not pulled: $model"; missing_models=$((missing_models + 1)); }
+    done < <(ollama_manifest_models)
+    [ "$missing_models" -eq 0 ] && check_ok "all manifest models present"
+  else
+    check_warn "ollama not installed"
+  fi
+
+  step "Upstream tools"
+  local tools_missing=0 tbin
+  while read -r tbin _; do
+    [ -n "$tbin" ] || continue
+    if have "$tbin"; then
+      check_ok "$tbin"
+    else
+      check_warn "$tbin not on PATH — run 'dot tools install'"
+      tools_missing=$((tools_missing + 1))
+    fi
+  done < <(tools_manifest)
+  [ "$tools_missing" -eq 0 ] && check_ok "everything in packages/tools is installed"
+
+  step "Private repos"
+  local repo_missing=0 rslug rdest rpath
+  while read -r rslug rdest; do
+    [ -n "$rslug" ] || continue
+    rpath=$(repo_dest "$rslug" "$rdest")
+    [ -d "$rpath/.git" ] || { check_warn "not cloned: $rslug"; repo_missing=$((repo_missing + 1)); }
+  done < <(repos_manifest)
+  if [ "$repo_missing" -eq 0 ]; then
+    check_ok "all manifest repos cloned"
+  elif ! github_ssh_ready; then
+    check_warn "GitHub is not accepting this key — 'dot repos clone' will fail until it does"
+  fi
+
+  step "Work identity"
+  local workcfg=$HOME_DIR/.config/git/work_config
+  if [ -d "$HOME/Code/work" ] && [ -f "$workcfg" ] && grep -q PLACEHOLDER "$workcfg"; then
+    check_fail "$HOME/Code/work exists but work_config still has PLACEHOLDER values"
+  else
+    check_ok "work identity consistent"
+  fi
+
+  step "Repo hygiene"
+  # Scans the stowed config only, not this script — `dot` names FleetEV in
+  # this very check, and matching itself would fail doctor forever.
+  local fleet_hits
+  fleet_hits=$(grep -rli fleetev "$HOME_DIR" "$PACKAGES_DIR" 2>/dev/null || true)
+  if [ -n "$fleet_hits" ]; then
+    check_fail "FleetEV references found in the tracked tree — these must not come back"
+    printf '%s\n' "$fleet_hits" | sed "s|$DOTFILES_DIR/|      |"
+  else
+    check_ok "no FleetEV references"
+  fi
+
+  if secret_scan_quiet; then
+    check_ok "no secret-shaped strings in tracked files"
+  else
+    check_fail "possible secrets found — run 'dot secret-scan' for detail"
+  fi
+
+  if [ -s "$FAILURES_FILE" ]; then
+    check_warn "$(wc -l < "$FAILURES_FILE" | tr -d ' ') recorded failure(s) — 'dot retry-failed'"
+  fi
+
+  printf '\n'
+  if [ "$DOCTOR_FAILURES" -gt 0 ]; then
+    err "$DOCTOR_FAILURES failure(s), $DOCTOR_WARNINGS warning(s)"
+    return 1
+  fi
+  if [ "$DOCTOR_WARNINGS" -gt 0 ]; then
+    warn "$DOCTOR_WARNINGS warning(s), no failures"
+    return 0
+  fi
+  ok "all green"
+}
+
+# ---------------------------------------------------------------------------
+# secret scan — a gate before push, not a one-time check
+# ---------------------------------------------------------------------------
+
+SECRET_PATTERNS=(
+  'ghp_[A-Za-z0-9]{20,}'
+  'gho_[A-Za-z0-9]{20,}'
+  'github_pat_[A-Za-z0-9_]{20,}'
+  'sk-[A-Za-z0-9]{20,}'
+  'sk-ant-[A-Za-z0-9-]{20,}'
+  'xox[baprs]-[A-Za-z0-9-]{10,}'
+  'AKIA[0-9A-Z]{16}'
+  'AIza[0-9A-Za-z_-]{35}'
+  '-----BEGIN [A-Z ]*PRIVATE KEY-----'
+  '(api[_-]?key|secret|password|passwd|token)[[:space:]]*[=:][[:space:]]*["\x27][^"\x27]{12,}'
+)
+
+secret_scan_quiet() { cmd_secret_scan >/dev/null 2>&1; }
+
+cmd_secret_scan() {
+  local hits=0 pattern
+  local -a files=()
+  # Only scan what git would actually publish.
+  if git -C "$DOTFILES_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    while IFS= read -r f; do files+=("$DOTFILES_DIR/$f"); done \
+      < <(git -C "$DOTFILES_DIR" ls-files)
+  else
+    while IFS= read -r f; do files+=("$f"); done < <(find "$HOME_DIR" -type f)
+  fi
+  [ ${#files[@]} -eq 0 ] && { ok "nothing tracked yet"; return 0; }
+
+  step "Scanning ${#files[@]} tracked file(s)"
+  for pattern in "${SECRET_PATTERNS[@]}"; do
+    local out
+    if out=$(grep -rInE "$pattern" "${files[@]}" 2>/dev/null); then
+      printf '%s\n' "$out" | sed "s|$DOTFILES_DIR/||" | while IFS= read -r line; do
+        printf '  %s!%s %s\n' "$C_RED" "$C_RESET" "$line"
+      done
+      hits=$((hits + 1))
+    fi
+  done
+
+  if [ "$hits" -gt 0 ]; then
+    err "$hits pattern(s) matched — do not push"
+    return 1
+  fi
+  ok "clean"
+}
+
+# ---------------------------------------------------------------------------
+# fish plugins, tmux TPM
+# ---------------------------------------------------------------------------
+
+install_fish_plugins() {
+  have fish || { warn "fish not installed, skipping plugins"; return 0; }
+  [ -f "$HOME_DIR/.config/fish/fish_plugins" ] || return 0
+  step "Fish plugins"
+  if ! fish -c 'type -q fisher' 2>/dev/null; then
+    info "installing fisher"
+    run fish -c 'curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher'
+  fi
+  run fish -c 'fisher update' && ok "plugins installed"
+}
+
+# Homebrew installs compose as a standalone binary, so `docker compose` (the
+# v2 subcommand) does not find it. Brew's caveat says to add cliPluginsExtraDirs
+# to ~/.docker/config.json — we don't: that file holds registry credentials.
+# ~/.docker/cli-plugins is on docker's default search path, so a symlink there
+# does the same job without touching a secret-bearing file.
+setup_docker_plugins() {
+  have docker || return 0
+  local plugin_dir=$HOME/.docker/cli-plugins
+  local src=/opt/homebrew/lib/docker/cli-plugins/docker-compose
+  [ -e "$src" ] || return 0
+
+  step "docker cli plugins"
+  if [ -e "$plugin_dir/docker-compose" ]; then
+    ok "compose plugin already linked"
+    return 0
+  fi
+  run mkdir -p "$plugin_dir"
+  run ln -sf "$src" "$plugin_dir/docker-compose"
+  ok "linked compose — 'docker compose' now works"
+}
+
+install_tpm() {
+  local tpm=$HOME/.tmux/plugins/tpm
+  step "tmux plugin manager"
+  if [ -d "$tpm" ]; then
+    ok "tpm already present"
+  else
+    run git clone https://github.com/tmux-plugins/tpm "$tpm" && ok "installed tpm"
+  fi
+
+  # TPM will not switch an existing clone's remote, so a plugin re-pointed at
+  # a fork stays on upstream forever unless we re-clone it.
+  local dotbar=$HOME/.tmux/plugins/tmux-dotbar
+  if [ -d "$dotbar" ]; then
+    local remote; remote=$(git -C "$dotbar" remote get-url origin 2>/dev/null || true)
+    if [[ $remote != *sixfourtwelve* ]]; then
+      warn "tmux-dotbar points at $remote, not the fork — re-cloning"
+      run rm -rf "$dotbar"
+      run git clone https://github.com/sixfourtwelve/tmux-dotbar "$dotbar" \
+        && ok "re-cloned from the fork"
+    else
+      ok "tmux-dotbar on the fork"
+    fi
+  fi
+
+  # Cloning tpm does not install the plugins .tmux.conf declares — normally
+  # that only happens when you press prefix+I inside a running session, which
+  # is easy to not know about on a new machine.
+  if [ -x "$tpm/bin/install_plugins" ]; then
+    if run "$tpm/bin/install_plugins" >/dev/null 2>&1; then
+      ok "tmux plugins installed"
+    else
+      warn "tpm install_plugins failed — press prefix+I inside tmux"
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# dot init / update
+# ---------------------------------------------------------------------------
+
+cmd_init() {
+  local arg
+  for arg in "$@"; do
+    case $arg in
+      --skip-ssh)    SKIP_SSH=true ;;
+      --skip-gpg)    SKIP_GPG=true ;;
+      --skip-ollama) SKIP_OLLAMA=true ;;
+      --skip-casks)  SKIP_CASKS=true ;;
+      --skip-repos)  SKIP_REPOS=true ;;
+      --skip-tools)  SKIP_TOOLS=true ;;
+      --work)        WORK_MACHINE=true ;;
+      --dry-run)     DRY_RUN=true ;;
+      *) die "unknown flag '$arg' — see 'dot help'" ;;
+    esac
+  done
+
+  [ "$DRY_RUN" = true ] && warn "dry run — nothing will be changed"
+  rm -f "$FAILURES_FILE"
+
+  step "Homebrew"
+  if have brew; then
+    ok "already installed"
+  else
+    info "installing homebrew"
+    run /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  fi
+
+  try_step "brew bundle" install_bundles
+  try_step "stow" cmd_stow
+  # Strictly after stow: these installers write into ~/.claude and ~/.pi, which
+  # are tracked. Run them first and they leave real files where the symlinks
+  # belong, and stow then refuses to link over them.
+  [ "$SKIP_TOOLS" = true ]  || try_step "tools" tools_install
+  [ "$SKIP_SSH" = true ]    || try_step "gen-ssh-key" cmd_gen_ssh_key
+  [ "$SKIP_GPG" = true ]    || try_step "gen-gpg-key" cmd_gen_gpg_key
+  # Strictly after gen-ssh-key: the manifest is private repos over SSH.
+  [ "$SKIP_REPOS" = true ]  || { try_step "repos" repos_clone; try_step "fonts" cmd_fonts; }
+  if [ "$SKIP_OLLAMA" = false ]; then
+    try_step "ollama migration" migrate_ollama_to_cask
+    try_step "ollama sync" ollama_cmd_sync
+  fi
+  try_step "fish plugins" install_fish_plugins
+  try_step "tpm" install_tpm
+  try_step "docker plugins" setup_docker_plugins
+  try_step "login shell" set_login_shell
+
+  step "Done"
+  if [ -s "$FAILURES_FILE" ]; then
+    warn "some steps failed:"
+    sed 's/^/    /' "$FAILURES_FILE"
+    dim "re-run them with: dot retry-failed"
+  else
+    ok "init complete — run 'dot doctor' to verify"
+  fi
+}
+
+cmd_update() {
+  local arg
+  for arg in "$@"; do
+    case $arg in
+      --work)    WORK_MACHINE=true ;;
+      --dry-run) DRY_RUN=true ;;
+      *) die "unknown flag '$arg'" ;;
+    esac
+  done
+
+  step "Pulling $DOTFILES_DIR"
+  if ! git -C "$DOTFILES_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    # A zip download has no .git. Everything else in update still works, so
+    # skip the pull rather than aborting on a raw "fatal: not a git repository".
+    warn "not a git checkout — skipping pull"
+    dim "downloaded as a zip? clone it instead to get updates:"
+    dim "  git clone https://github.com/sixfourtwelve/.dotfiles.git ~/.dotfiles"
+  elif [ -n "$(git -C "$DOTFILES_DIR" status --porcelain)" ]; then
+    warn "working tree is dirty — skipping git pull"
+  else
+    run git -C "$DOTFILES_DIR" pull --ff-only
+  fi
+
+  package_update
+  cmd_stow
+  # Both tools self-update, so this is only here to pick up an entry added to
+  # packages/tools since the last run — everything present is skipped.
+  tools_install
+  have ollama && ollama_cmd_sync
+  install_fish_plugins
+  ok "update complete"
+}
+
+cmd_retry_failed() {
+  [ -s "$FAILURES_FILE" ] || { ok "nothing to retry"; return 0; }
+  local failures; failures=$(cat "$FAILURES_FILE")
+  rm -f "$FAILURES_FILE"
+
+  local name
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    step "Retrying: $name"
+    case $name in
+      "brew bundle")       try_step "$name" install_bundles ;;
+      stow)                try_step "$name" cmd_stow ;;
+      gen-ssh-key)         try_step "$name" cmd_gen_ssh_key ;;
+      gen-gpg-key)         try_step "$name" cmd_gen_gpg_key ;;
+      repos)               try_step "$name" repos_clone ;;
+      fonts)               try_step "$name" cmd_fonts ;;
+      "clone "*)           try_step "$name" run git clone "git@github.com:${name#clone }.git" ;;
+      tools)               try_step "$name" tools_install ;;
+      "tool "*)            try_step "$name" tools_install "${name#tool }" ;;
+      "ollama migration")  try_step "$name" migrate_ollama_to_cask ;;
+      "ollama sync")       try_step "$name" ollama_cmd_sync ;;
+      "ollama pull "*)     try_step "$name" run ollama pull "${name#ollama pull }" ;;
+      "fish plugins")      try_step "$name" install_fish_plugins ;;
+      tpm)                 try_step "$name" install_tpm ;;
+      "docker plugins")    try_step "$name" setup_docker_plugins ;;
+      "login shell")       try_step "$name" set_login_shell ;;
+      *) warn "no retry handler for '$name' — skipping" ;;
+    esac
+  done <<< "$failures"
+
+  if [ -s "$FAILURES_FILE" ]; then
+    warn "still failing:"
+    sed 's/^/    /' "$FAILURES_FILE"
+    return 1
+  fi
+  ok "all retries succeeded"
+}
+
+# ---------------------------------------------------------------------------
+# link / unlink / edit / completions
+# ---------------------------------------------------------------------------
+
+cmd_link() {
+  local bindir=$HOME/.local/bin
+  run mkdir -p "$bindir"
+  run ln -sf "$DOTFILES_DIR/dot" "$bindir/dot"
+  ok "linked $bindir/dot"
+  case :$PATH: in
+    *:$bindir:*) ;;
+    *) warn "$bindir is not on PATH — add it in your fish config" ;;
+  esac
+}
+
+cmd_unlink() {
+  run rm -f "$HOME/.local/bin/dot"
+  ok "unlinked"
+}
+
+cmd_edit() {
+  local editor=${EDITOR:-nvim}
+  exec $editor "$DOTFILES_DIR"
+}
+
+cmd_completions() {
+  cat <<'FISH'
+# dot completions — generated by `dot completions`
+#   dot completions > ~/.config/fish/completions/dot.fish
+
+complete -c dot -f
+
+set -l cmds init update doctor stow unstow package check-packages retry-failed \
+    gen-ssh-key gen-gpg-key ollama repos tools fonts secret-scan completions link unlink edit help
+
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a init            -d "Full machine setup"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a update          -d "Pull, upgrade, restow, sync"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a doctor          -d "Health check"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a stow            -d "Re-symlink home/ into ~"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a unstow          -d "Remove home/ symlinks"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a package         -d "Manage bundles"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a check-packages  -d "Installed vs missing"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a retry-failed    -d "Re-run failed init steps"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a gen-ssh-key     -d "Generate an SSH key"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a gen-gpg-key     -d "Generate a GPG signing key"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a ollama          -d "Manage ollama models"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a repos           -d "Clone private repos"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a tools           -d "Install tools that ship their own installer"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a secret-scan     -d "Scan tracked files for secrets"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a completions     -d "Emit fish completions"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a link            -d "Link dot into ~/.local/bin"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a unlink          -d "Unlink dot"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a edit            -d "Open the repo in \$EDITOR"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a help            -d "Usage"
+
+complete -c dot -n "__fish_seen_subcommand_from init" -l skip-ssh    -d "Skip SSH key generation"
+complete -c dot -n "__fish_seen_subcommand_from init" -l skip-gpg    -d "Skip GPG key generation"
+complete -c dot -n "__fish_seen_subcommand_from init" -l skip-ollama -d "Skip ollama models"
+complete -c dot -n "__fish_seen_subcommand_from init" -l skip-casks  -d "Formulae only"
+complete -c dot -n "__fish_seen_subcommand_from init" -l skip-repos  -d "Skip cloning private repos"
+complete -c dot -n "__fish_seen_subcommand_from init" -l skip-tools  -d "Skip the upstream tool installers"
+complete -c dot -n "__fish_seen_subcommand_from init" -l work        -d "Also install bundle.work"
+complete -c dot -n "__fish_seen_subcommand_from init" -l dry-run     -d "Describe, change nothing"
+
+complete -c dot -n "__fish_seen_subcommand_from package" -a "add remove update list"
+complete -c dot -n "__fish_seen_subcommand_from ollama"  -a "list pull sync"
+complete -c dot -n "__fish_seen_subcommand_from repos"   -a "list clone add"
+complete -c dot -n "__fish_seen_subcommand_from tools"   -a "list install"
+complete -c dot -n "__fish_seen_subcommand_from tools" -l force -d "Reinstall even if already on PATH"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a fonts           -d "Install fonts from the mono-lisa clone"
+FISH
+}
+
+cmd_help() {
+  cat <<EOF
+${C_BOLD}dot${C_RESET} — dotfiles CLI for $DOTFILES_DIR
+
+${C_BOLD}SETUP${C_RESET}
+  init [flags]              Full setup: brew, bundles, stow, keys, models, plugins
+  update [--work]           git pull, brew upgrade, restow, sync models
+  doctor                    Health check; exits non-zero on failure
+  retry-failed              Re-run whatever failed during the last init
+
+${C_BOLD}SYMLINKS${C_RESET}
+  stow                      Re-symlink home/ into \$HOME
+  unstow                    Remove those symlinks
+  link / unlink             Put 'dot' on PATH via ~/.local/bin
+
+${C_BOLD}PACKAGES${C_RESET}
+  package add <name> [brew|cask] [base|work]
+                            Add to a bundle and install. Kind is auto-detected.
+  package remove <name> [base|work]
+  package update            brew update && brew upgrade
+  package list              Show both bundles
+  check-packages            Installed vs missing, per bundle
+
+${C_BOLD}KEYS${C_RESET}
+  gen-ssh-key [--force]     ed25519 SSH key, agent, gh ssh-key add
+  gen-gpg-key               ed25519 GPG key, git signing config, gh gpg-key add
+
+${C_BOLD}MODELS${C_RESET}
+  ollama list               Manifest vs installed
+  ollama pull <model>       Pull and record in the manifest
+  ollama sync               Pull everything the manifest declares and you lack
+
+${C_BOLD}REPOS${C_RESET}
+  repos list                Manifest vs what is cloned
+  repos clone               Clone everything missing (needs SSH set up first)
+  repos add <owner/repo> [dest]
+                            Add to the manifest and clone
+  fonts                     Install fonts from the mono-lisa clone
+
+${C_BOLD}TOOLS${C_RESET}
+  tools list                packages/tools vs what is on PATH
+  tools install [name...] [--force]
+                            Run the upstream 'curl | sh' installer for anything
+                            missing. Already-installed tools are skipped.
+
+${C_BOLD}OTHER${C_RESET}
+  secret-scan               Scan tracked files for credential-shaped strings
+  completions               Emit fish completions
+  edit                      Open the repo in \$EDITOR
+  help                      This
+
+${C_BOLD}INIT FLAGS${C_RESET}
+  --skip-ssh  --skip-gpg  --skip-ollama  --skip-casks  --skip-repos
+  --skip-tools  --work  --dry-run
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+
+main() {
+  local cmd=${1:-help}
+  [ $# -gt 0 ] && shift
+
+  # --dry-run is accepted anywhere, not just on init.
+  local -a args=()
+  local a
+  for a in "$@"; do
+    if [ "$a" = "--dry-run" ] && [ "$cmd" != "init" ]; then
+      DRY_RUN=true
+    else
+      args+=("$a")
+    fi
+  done
+  set -- ${args[@]+"${args[@]}"}
+
+  case $cmd in
+    init)             cmd_init "$@" ;;
+    update)           cmd_update "$@" ;;
+    doctor)           cmd_doctor ;;
+    stow)             cmd_stow ;;
+    unstow)           cmd_unstow ;;
+    package)          cmd_package "$@" ;;
+    check-packages)   cmd_check_packages ;;
+    retry-failed)     cmd_retry_failed ;;
+    gen-ssh-key)      cmd_gen_ssh_key "$@" ;;
+    gen-gpg-key)      cmd_gen_gpg_key ;;
+    ollama)           cmd_ollama "$@" ;;
+    repos)            cmd_repos "$@" ;;
+    tools)            cmd_tools "$@" ;;
+    fonts)            cmd_fonts ;;
+    secret-scan)      cmd_secret_scan ;;
+    completions)      cmd_completions ;;
+    link)             cmd_link ;;
+    unlink)           cmd_unlink ;;
+    edit)             cmd_edit ;;
+    help|-h|--help)   cmd_help ;;
+    *) err "unknown command '$cmd'"; printf '\n'; cmd_help; exit 1 ;;
+  esac
+}
+
+main "$@"

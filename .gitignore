@@ -1,0 +1,72 @@
+# ---------------------------------------------------------------------------
+# Secrets and credentials — never tracked, no exceptions below.
+# ---------------------------------------------------------------------------
+**/auth.json
+**/mcp-auth.json
+**/trust.json
+**/*.key
+**/*.pem
+**/id_rsa*
+**/id_ed25519*
+**/.env
+**/.env.*
+home/.ssh/
+home/.gnupg/
+
+# ---------------------------------------------------------------------------
+# Machine-local state — differs per machine, must not be shared.
+# ---------------------------------------------------------------------------
+home/.config/fish/fish_variables
+home/.config/fish/conf.d/secrets.fish
+home/.config/git/local_config
+# Every .local variant, at any depth — per-machine permission state by
+# design, and the file most likely to leak machine-specific paths.
+**/settings.local.json
+**/*.bak
+**/*.bak.*
+.DS_Store
+**/.DS_Store
+
+# ---------------------------------------------------------------------------
+# ~/.claude — inverted: ignore everything, then un-ignore tracked paths.
+# Keeps projects/ (43M), plugins/ (78M) and session state out of the repo.
+# ---------------------------------------------------------------------------
+home/.claude/*
+!home/.claude/settings.json
+!home/.claude/statusline-command.sh
+!home/.claude/commands/
+!home/.claude/skills/
+
+# Tied to a private Notion workspace and of no use to anyone else. Kept on
+# this machine, never published.
+home/.claude/skills/noteday/
+
+# ---------------------------------------------------------------------------
+# ~/.config/herdr — config.toml only. session*.json, the logs, cached release
+# notes and the plugin lock are all per-machine state.
+# ---------------------------------------------------------------------------
+home/.config/herdr/*
+!home/.config/herdr/config.toml
+
+# ---------------------------------------------------------------------------
+# ~/.plannotator — same inversion. drafts/, history/, plans/, sessions/ and
+# vendor/ are all per-machine working state.
+# ---------------------------------------------------------------------------
+home/.plannotator/*
+!home/.plannotator/config.json
+
+# ---------------------------------------------------------------------------
+# ~/.pi — same inversion. Upstream tree is ~1.3G; we track kilobytes of it.
+# ---------------------------------------------------------------------------
+home/.pi/*
+!home/.pi/mcp.json
+!home/.pi/models.md
+!home/.pi/web-search.json
+!home/.pi/agent/
+home/.pi/agent/*
+!home/.pi/agent/settings.json
+!home/.pi/agent/SYSTEM.md
+!home/.pi/agent/models.json
+!home/.pi/agent/agents/
+!home/.pi/agent/skills/
+!home/.pi/agent/extensions/

@@ -1,0 +1,11 @@
+# Work-only additions, layered on top of `bundle`.
+#
+# Installed by `dot init --work` / `dot update` on machines flagged as work.
+# This file is additive: everything in `bundle` is installed here too, so
+# nothing that belongs on every machine should be duplicated into this file.
+#
+# Casks are allowed here. (Upstream dmmulroy/.dotfiles calls work-bundle casks
+# an anti-pattern and keeps this file formulae-only — we diverge on purpose,
+# because Slack is a cask and is genuinely work-only.)
+
+cask "slack"

@@ -1,0 +1,10 @@
+{
+    "diagnostics.globals": [
+        "vim",
+        "bufnr"
+    ],
+    "diagnostics.disable": [
+        "unused-local",
+        "undefined-global"
+    ]
+}

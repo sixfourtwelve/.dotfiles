@@ -1,0 +1,6 @@
+require("sixfourtwelve.remap")
+require("sixfourtwelve.set")
+require("sixfourtwelve.lazy")
+require("sixfourtwelve.lsp")
+require("sixfourtwelve.cmp")
+require("sixfourtwelve.autocmds")

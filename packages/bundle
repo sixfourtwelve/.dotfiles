@@ -1,0 +1,68 @@
+# Base bundle — installed on every machine, work included.
+#
+# Formulae and casks both live here. `bundle.work` holds work-only
+# additions on top of this file; it is never a replacement for it.
+
+# ---------------------------------------------------------------------------
+# Formulae
+# ---------------------------------------------------------------------------
+brew "bun"
+brew "cmake"
+brew "direnv"
+
+# Containers. colima is the VM/runtime; `docker` here is the CLI only, not
+# Docker Desktop — the two conflict, so do not add the docker-desktop cask.
+# After install: `colima start`, then docker talks to it with no further setup.
+brew "colima"
+brew "docker"
+brew "docker-compose"
+
+brew "fd"
+brew "ffmpeg"
+brew "fish"
+brew "fisher"
+brew "fzf"
+brew "gh"
+brew "gnu-sed"
+brew "herdr"
+brew "jq"
+brew "llvm"
+brew "neovim"
+brew "node"
+brew "python@3.14"
+brew "ripgrep"
+brew "shellcheck"
+brew "starship"
+brew "tmux"
+brew "tree"
+brew "tree-sitter-cli"
+brew "wget"
+brew "zoxide"
+
+# Repo machinery — these three exist to make `dot` itself work.
+brew "gnupg"        # dot gen-gpg-key
+brew "pinentry-mac" # GPG passphrase prompt under a GUI session
+brew "stow"         # the entire symlink strategy
+
+# ---------------------------------------------------------------------------
+# Casks
+#
+# Three tokens here are not the obvious guess; do not "correct" them:
+#   Dia       is thebrowsercompany-dia, not `dia`
+#   Hex       is kitlangton-hex, not `hex` or `kitlangton/hex`
+#   Tailscale is tailscale-app (the GUI), not `tailscale` (CLI only)
+# ---------------------------------------------------------------------------
+cask "thebrowsercompany-dia"
+# ghostty's font-family. The italic/bold-italic faces it asks for are
+# MonoLisa, which is commercial and lives in the private mono-lisa repo —
+# 'dot fonts' installs those from the clone, they are not in this manifest.
+cask "font-jetbrains-mono"
+cask "ghostty"
+cask "kitlangton-hex"
+cask "linear"
+cask "ollama-app"
+cask "raycast"
+cask "spotify"
+cask "tailscale-app"
+cask "visual-studio-code"
+cask "whatsapp"
