@@ -76,7 +76,8 @@
     "npm:@narumitw/pi-webui",
     "npm:pi-thinking-steps",
     "git:github.com/dmmulroy/pi-mcp",
-    "npm:pi-claude-cli"
+    "npm:pi-claude-cli",
+    "npm:@ogulcancelik/pi-ssh-tools"
   ],
   "hideThinkingBlock": true,
   "piExecutor": {
