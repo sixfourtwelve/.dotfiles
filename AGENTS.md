@@ -81,6 +81,13 @@ are three whitespace-separated fields and the shell must be `sh` or `bash`;
 never installed over, whatever put it there — `pi` on the current machine is a
 global npm package under Homebrew's node prefix, and that counts as installed.
 
+**Executor is not a `packages/tools` entry.** It installs via
+`npm install -g executor`, not `curl | sh`, so it does not fit that manifest's
+format. It has its own subsystem instead: `cmd_executor` / `executor_install`
+/ `executor_status` in `dot`, wired into `init` (after `tools`, since
+registering with `claude` needs `claude` on PATH), `update`, `doctor`, and
+`retry-failed`. Do not fold it into `packages/tools`.
+
 **Ordering in `dot init` is not arbitrary.** `tools` must stay after `stow` —
 those installers write into `~/.claude` and `~/.pi`, which are tracked, and
 running them first leaves real files where the symlinks belong, which stow then

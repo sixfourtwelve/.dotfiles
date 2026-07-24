@@ -105,14 +105,16 @@ On a work machine, fill in the real values in
 | `dot repos add <owner/repo> [dest]` | Add to the manifest and clone |
 | `dot tools list` | `packages/tools` vs what is on PATH |
 | `dot tools install [name...]` | Run the upstream installer for anything missing; `--force` reinstalls |
+| `dot executor install` | `npm install -g executor`, register its background service, register it as an MCP server for `claude` |
+| `dot executor status` | Whether executor is installed and registered with `claude` |
 | `dot fonts` | Install fonts from the mono-lisa clone into `~/Library/Fonts` |
 | `dot secret-scan` | Scan tracked files for credential-shaped strings |
 | `dot completions` | Emit fish completions |
 | `dot edit` | Open the repo in `$EDITOR` |
 
 `init` flags: `--skip-ssh`, `--skip-gpg`, `--skip-ollama`, `--skip-casks`,
-`--skip-repos`, `--skip-tools`, `--work`, `--dry-run`. `--dry-run` works on any
-command, not just `init`.
+`--skip-repos`, `--skip-tools`, `--skip-executor`, `--work`, `--dry-run`.
+`--dry-run` works on any command, not just `init`.
 
 ## Things worth knowing
 
@@ -203,6 +205,18 @@ matters: both write into `~/.claude` and `~/.pi`, and doing it the other way
 round leaves real files where the tracked symlinks belong, which stow then
 refuses to link over. Anything with a usable Homebrew formula belongs in
 `bundle` instead — this manifest is for tools that have no good one.
+
+**[Executor](https://github.com/UsefulSoftwareCo/executor) is its own
+subsystem, not a `packages/tools` entry.** It ships as an npm package
+(`npm install -g executor`), not a `curl | sh` installer, so `dot executor
+install` handles it separately: install the CLI, register its background
+service, then register it as an MCP server for `claude` at
+`http://127.0.0.1:4789/mcp`. `home/.pi/mcp.json` already points `pi` at that
+same URL — it's tracked, since it names no secret, only a localhost port —
+so both agents end up sharing the one running instance. `dot init` runs this
+*after* `tools`, because registering with `claude` needs `claude` on PATH
+first. The `claude` registration itself lives in `~/.claude.json`, which is
+machine state and never tracked, the same reasoning as `fish_variables`.
 
 **Models are not in git.** `packages/ollama` is a manifest of six tags,
 roughly 64 GB on a fresh machine. `dot ollama sync` pulls only what is missing

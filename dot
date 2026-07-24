@@ -39,6 +39,7 @@ SKIP_OLLAMA=false
 SKIP_CASKS=false
 SKIP_REPOS=false
 SKIP_TOOLS=false
+SKIP_EXECUTOR=false
 
 # ---------------------------------------------------------------------------
 # Output
@@ -888,6 +889,82 @@ tools_install() {
 }
 
 # ---------------------------------------------------------------------------
+# dot executor — UsefulSoftwareCo/executor, the shared MCP tool proxy
+#
+# Unlike packages/tools, this ships as an npm package, not a curl | sh
+# installer, so it gets its own subsystem rather than a manifest entry. It
+# runs as a local background service that both agents talk to over MCP.
+# home/.pi/mcp.json already points pi at this URL (tracked, committed
+# alongside the rest of home/); Claude Code is registered the same way here,
+# but that registration lives in ~/.claude.json, which is machine state like
+# fish_variables and is never tracked.
+# ---------------------------------------------------------------------------
+
+EXECUTOR_MCP_URL="http://127.0.0.1:4789/mcp"
+
+cmd_executor() {
+  local action=${1:-status}; shift || true
+  case $action in
+    install) executor_install ;;
+    status)  executor_status ;;
+    *) die "unknown: dot executor $action (expected: install, status)" ;;
+  esac
+}
+
+executor_claude_registered() {
+  have claude || return 1
+  claude mcp list 2>/dev/null | grep -qF 'executor'
+}
+
+executor_status() {
+  step "Executor"
+  if have executor; then
+    printf '  %s✓%s executor on PATH (%s)\n' "$C_GREEN" "$C_RESET" "$(command -v executor)"
+  else
+    printf '  %s·%s executor not installed — run '\''dot executor install'\''\n' "$C_YELLOW" "$C_RESET"
+  fi
+  if executor_claude_registered; then
+    printf '  %s✓%s registered with claude\n' "$C_GREEN" "$C_RESET"
+  else
+    printf '  %s·%s not registered with claude — run '\''dot executor install'\''\n' "$C_YELLOW" "$C_RESET"
+  fi
+}
+
+executor_install() {
+  step "Executor"
+  have npm || { err "npm is not available — needs node (brew install node)"; return 1; }
+
+  if have executor; then
+    ok "executor already on PATH ($(command -v executor))"
+  else
+    info "installing executor (npm install -g executor)"
+    run npm install -g executor
+  fi
+
+  if [ "$DRY_RUN" = false ] && ! have executor; then
+    err "executor not on PATH after install"
+    return 1
+  fi
+
+  info "registering the background service"
+  run executor install
+
+  if have claude; then
+    if executor_claude_registered; then
+      ok "claude already has an executor MCP registration"
+    else
+      info "registering executor with claude ($EXECUTOR_MCP_URL)"
+      run claude mcp add executor --transport http "$EXECUTOR_MCP_URL" -s user
+      ok "registered"
+    fi
+  else
+    warn "claude is not on PATH — run 'dot executor install' again after 'dot tools install'"
+  fi
+
+  dim "pi is already wired up via home/.pi/mcp.json"
+}
+
+# ---------------------------------------------------------------------------
 # dot doctor
 # ---------------------------------------------------------------------------
 
@@ -1009,6 +1086,18 @@ cmd_doctor() {
     fi
   done < <(tools_manifest)
   [ "$tools_missing" -eq 0 ] && check_ok "everything in packages/tools is installed"
+
+  step "Executor"
+  if have executor; then
+    check_ok "executor on PATH ($(command -v executor))"
+  else
+    check_warn "executor not installed — run 'dot executor install'"
+  fi
+  if executor_claude_registered; then
+    check_ok "claude has an executor MCP registration"
+  else
+    check_warn "claude has no executor MCP registration — run 'dot executor install'"
+  fi
 
   step "Private repos"
   local repo_missing=0 rslug rdest rpath
@@ -1214,6 +1303,7 @@ cmd_init() {
       --skip-casks)  SKIP_CASKS=true ;;
       --skip-repos)  SKIP_REPOS=true ;;
       --skip-tools)  SKIP_TOOLS=true ;;
+      --skip-executor) SKIP_EXECUTOR=true ;;
       --work)        WORK_MACHINE=true ;;
       --dry-run)     DRY_RUN=true ;;
       *) die "unknown flag '$arg' — see 'dot help'" ;;
@@ -1238,6 +1328,8 @@ cmd_init() {
   # are tracked. Run them first and they leave real files where the symlinks
   # belong, and stow then refuses to link over them.
   [ "$SKIP_TOOLS" = true ]  || try_step "tools" tools_install
+  # Strictly after tools: registering executor with claude needs claude on PATH.
+  [ "$SKIP_EXECUTOR" = true ] || try_step "executor" executor_install
   [ "$SKIP_SSH" = true ]    || try_step "gen-ssh-key" cmd_gen_ssh_key
   [ "$SKIP_GPG" = true ]    || try_step "gen-gpg-key" cmd_gen_gpg_key
   # Strictly after gen-ssh-key: the manifest is private repos over SSH.
@@ -1289,6 +1381,8 @@ cmd_update() {
   # Both tools self-update, so this is only here to pick up an entry added to
   # packages/tools since the last run — everything present is skipped.
   tools_install
+  # Picks up a missing claude MCP registration; does not force an npm upgrade.
+  executor_install
   have ollama && ollama_cmd_sync
   install_fish_plugins
   ok "update complete"
@@ -1314,6 +1408,7 @@ cmd_retry_failed() {
       "clone "*)           try_step "$name" run git clone "git@github.com:${name#clone }.git" ;;
       tools)               try_step "$name" tools_install ;;
       "tool "*)            try_step "$name" tools_install "${name#tool }" ;;
+      executor)            try_step "$name" executor_install ;;
       "ollama migration")  try_step "$name" migrate_ollama_to_cask ;;
       "ollama sync")       try_step "$name" ollama_cmd_sync ;;
       "ollama pull "*)     try_step "$name" run ollama pull "${name#ollama pull }" ;;
@@ -1366,7 +1461,7 @@ cmd_completions() {
 complete -c dot -f
 
 set -l cmds init update doctor stow unstow package check-packages retry-failed \
-    gen-ssh-key gen-gpg-key ollama repos tools fonts secret-scan completions link unlink edit help
+    gen-ssh-key gen-gpg-key ollama repos tools executor fonts secret-scan completions link unlink edit help
 
 complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a init            -d "Full machine setup"
 complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a update          -d "Pull, upgrade, restow, sync"
@@ -1381,6 +1476,7 @@ complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a gen-gpg-key     -d
 complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a ollama          -d "Manage ollama models"
 complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a repos           -d "Clone private repos"
 complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a tools           -d "Install tools that ship their own installer"
+complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a executor        -d "Install and register UsefulSoftwareCo/executor"
 complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a secret-scan     -d "Scan tracked files for secrets"
 complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a completions     -d "Emit fish completions"
 complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a link            -d "Link dot into ~/.local/bin"
@@ -1394,6 +1490,7 @@ complete -c dot -n "__fish_seen_subcommand_from init" -l skip-ollama -d "Skip ol
 complete -c dot -n "__fish_seen_subcommand_from init" -l skip-casks  -d "Formulae only"
 complete -c dot -n "__fish_seen_subcommand_from init" -l skip-repos  -d "Skip cloning private repos"
 complete -c dot -n "__fish_seen_subcommand_from init" -l skip-tools  -d "Skip the upstream tool installers"
+complete -c dot -n "__fish_seen_subcommand_from init" -l skip-executor -d "Skip installing/registering executor"
 complete -c dot -n "__fish_seen_subcommand_from init" -l work        -d "Also install bundle.work"
 complete -c dot -n "__fish_seen_subcommand_from init" -l dry-run     -d "Describe, change nothing"
 
@@ -1402,6 +1499,7 @@ complete -c dot -n "__fish_seen_subcommand_from ollama"  -a "list pull sync"
 complete -c dot -n "__fish_seen_subcommand_from repos"   -a "list clone add"
 complete -c dot -n "__fish_seen_subcommand_from tools"   -a "list install"
 complete -c dot -n "__fish_seen_subcommand_from tools" -l force -d "Reinstall even if already on PATH"
+complete -c dot -n "__fish_seen_subcommand_from executor" -a "install status"
 complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a fonts           -d "Install fonts from the mono-lisa clone"
 complete -c dot -n "not __fish_seen_subcommand_from $cmds" -a skills          -d "Sync skills from the sixfourtwelve/skills clone"
 FISH
@@ -1452,6 +1550,9 @@ ${C_BOLD}TOOLS${C_RESET}
   tools install [name...] [--force]
                             Run the upstream 'curl | sh' installer for anything
                             missing. Already-installed tools are skipped.
+  executor install         npm install -g executor, register the background
+                            service, and register it as an MCP server for claude
+  executor status           executor + claude MCP registration, installed or not
 
 ${C_BOLD}OTHER${C_RESET}
   secret-scan               Scan tracked files for credential-shaped strings
@@ -1461,7 +1562,7 @@ ${C_BOLD}OTHER${C_RESET}
 
 ${C_BOLD}INIT FLAGS${C_RESET}
   --skip-ssh  --skip-gpg  --skip-ollama  --skip-casks  --skip-repos
-  --skip-tools  --work  --dry-run
+  --skip-tools  --skip-executor  --work  --dry-run
 EOF
 }
 
@@ -1499,6 +1600,7 @@ main() {
     ollama)           cmd_ollama "$@" ;;
     repos)            cmd_repos "$@" ;;
     tools)            cmd_tools "$@" ;;
+    executor)         cmd_executor "$@" ;;
     fonts)            cmd_fonts ;;
     skills)           cmd_skills ;;
     secret-scan)      cmd_secret_scan ;;
