@@ -1,7 +1,7 @@
-# Base bundle — installed on every machine, work included.
-#
-# Formulae and casks both live here. `bundle.work` holds work-only
-# additions on top of this file; it is never a replacement for it.
+# Every machine installs everything in this file. Entries tagged `# work`
+# at end-of-line are additionally skipped on non-work machines — `dot init`
+# installs them only with `--work` — but count as ordinary Ruby comments to
+# `brew bundle` itself, so the file is always valid as-is.
 
 # ---------------------------------------------------------------------------
 # Formulae
@@ -62,6 +62,7 @@ cask "kitlangton-hex"
 cask "linear"
 cask "ollama-app"
 cask "raycast"
+cask "slack" # work
 cask "spotify"
 cask "tailscale-app"
 cask "visual-studio-code"

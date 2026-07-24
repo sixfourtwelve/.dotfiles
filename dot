@@ -102,10 +102,11 @@ try_step() {
 # Package manifest helpers
 # ---------------------------------------------------------------------------
 
+# base and work are one file now; entries tagged `# work` at end-of-line
+# belong to the work bundle, everything else to base. Validates the name.
 bundle_path() {
   case ${1:-base} in
-    base) printf '%s\n' "$PACKAGES_DIR/bundle" ;;
-    work) printf '%s\n' "$PACKAGES_DIR/bundle.work" ;;
+    base|work) printf '%s\n' "$PACKAGES_DIR/bundle" ;;
     *) die "unknown bundle '$1' (expected: base, work)" ;;
   esac
 }
@@ -115,7 +116,10 @@ manifest_entries() {
   local kind=$1 bundle=$2 file
   file=$(bundle_path "$bundle")
   [ -f "$file" ] || return 0
-  sed -n "s/^[[:space:]]*${kind}[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$file"
+  case $bundle in
+    base) sed -n "/# work\$/! s/^[[:space:]]*${kind}[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$file" ;;
+    work) sed -n "/# work\$/ s/^[[:space:]]*${kind}[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$file" ;;
+  esac
 }
 
 # Is this token a formula, a cask, or neither?
@@ -140,23 +144,25 @@ package_installed() {
 }
 
 # Insert a `kind "token"` line into a bundle, alphabetically within its block.
+# Work-bundle entries get the trailing `# work` tag that marks them as such.
 manifest_insert() {
-  local kind=$1 token=$2 file=$3 tmp
+  local kind=$1 token=$2 file=$3 bundle=$4 tmp suffix=''
+  [ "$bundle" = work ] && suffix=' # work'
   tmp=$(mktemp)
-  awk -v kind="$kind" -v token="$token" '
+  awk -v kind="$kind" -v token="$token" -v suffix="$suffix" '
     BEGIN { inserted = 0 }
     {
       if (!inserted && $0 ~ "^[[:space:]]*" kind "[[:space:]]+\"") {
         match($0, /"[^"]*"/)
         existing = substr($0, RSTART + 1, RLENGTH - 2)
         if (existing > token) {
-          print kind " \"" token "\""
+          print kind " \"" token "\"" suffix
           inserted = 1
         }
       }
       print
     }
-    END { if (!inserted) print kind " \"" token "\"" }
+    END { if (!inserted) print kind " \"" token "\"" suffix }
   ' "$file" > "$tmp"
   mv "$tmp" "$file"
 }
@@ -264,11 +270,11 @@ package_add() {
   fi
 
   local file; file=$(bundle_path "$bundle")
-  if grep -q "^[[:space:]]*${kind}[[:space:]]*\"${token}\"" "$file"; then
-    warn "$token already in $(basename "$file")"
+  if manifest_entries "$kind" "$bundle" | grep -qxF "$token"; then
+    warn "$token already in the $bundle bundle"
   else
-    run manifest_insert "$kind" "$token" "$file"
-    ok "added $kind \"$token\" to $(basename "$file")"
+    run manifest_insert "$kind" "$token" "$file" "$bundle"
+    ok "added $kind \"$token\" to the $bundle bundle"
   fi
 
   if package_installed "$kind" "$token"; then
@@ -284,19 +290,19 @@ package_add() {
 }
 
 package_remove() {
-  local token=${1:-} bundle=${2:-base}
-  [ -n "$token" ] || die "usage: dot package remove <name> [base|work]"
-  local file; file=$(bundle_path "$bundle")
+  local token=${1:-}
+  [ -n "$token" ] || die "usage: dot package remove <name>"
+  local file=$PACKAGES_DIR/bundle
 
   local kind found=false
   for kind in brew cask; do
     if grep -q "^[[:space:]]*${kind}[[:space:]]*\"${token}\"" "$file"; then
       run manifest_remove "$kind" "$token" "$file"
-      ok "removed $kind \"$token\" from $(basename "$file")"
+      ok "removed $kind \"$token\" from the bundle"
       found=true
     fi
   done
-  [ "$found" = true ] || die "$token not found in $(basename "$file")"
+  [ "$found" = true ] || die "$token not found in the bundle"
 
   # Uninstalling is a separate, explicit decision — the manifest is the
   # source of truth, but nothing here removes software behind your back.
@@ -315,9 +321,8 @@ package_update() {
 package_list() {
   local bundle
   for bundle in base work; do
-    local file; file=$(bundle_path "$bundle")
-    [ -f "$file" ] || continue
-    step "$(basename "$file")"
+    [ -f "$PACKAGES_DIR/bundle" ] || continue
+    step "$bundle bundle"
     local kind token
     for kind in brew cask; do
       while IFS= read -r token; do
@@ -333,9 +338,8 @@ cmd_check_packages() {
   local missing_total=0 bundle kind token
 
   for bundle in base work; do
-    local file; file=$(bundle_path "$bundle")
-    [ -f "$file" ] || continue
-    step "$(basename "$file")"
+    [ -f "$PACKAGES_DIR/bundle" ] || continue
+    step "$bundle bundle"
     local installed=0 missing=0
     for kind in brew cask; do
       while IFS= read -r token; do
@@ -371,21 +375,23 @@ install_bundles() {
   # with no redownload — the common case on a machine that predates this repo.
   export HOMEBREW_CASK_OPTS="${HOMEBREW_CASK_OPTS:-} --adopt"
 
-  step "Installing base bundle"
+  step "Installing bundle"
+  local tmp; tmp=$(mktemp)
+  if [ "$WORK_MACHINE" = true ]; then
+    cp "$PACKAGES_DIR/bundle" "$tmp"
+  else
+    # `# work`-tagged lines are still valid Ruby comments to brew bundle, so
+    # they'd install anyway if left in — strip them on non-work machines.
+    grep -v '# work$' "$PACKAGES_DIR/bundle" > "$tmp"
+  fi
   if [ "$SKIP_CASKS" = true ]; then
     # brew bundle has no --formulae-only, so filter the manifest ourselves.
-    local tmp; tmp=$(mktemp)
-    grep -v '^[[:space:]]*cask' "$PACKAGES_DIR/bundle" > "$tmp"
-    run brew bundle --file "$tmp" "${flags[@]}"
-    rm -f "$tmp"
-  else
-    run brew bundle --file "$PACKAGES_DIR/bundle"
+    local tmp2; tmp2=$(mktemp)
+    grep -v '^[[:space:]]*cask' "$tmp" > "$tmp2"
+    mv "$tmp2" "$tmp"
   fi
-
-  if [ "$WORK_MACHINE" = true ]; then
-    step "Installing work bundle"
-    run brew bundle --file "$PACKAGES_DIR/bundle.work"
-  fi
+  run brew bundle --file "$tmp" "${flags[@]}"
+  rm -f "$tmp"
 }
 
 # ---------------------------------------------------------------------------
@@ -1491,7 +1497,7 @@ complete -c dot -n "__fish_seen_subcommand_from init" -l skip-casks  -d "Formula
 complete -c dot -n "__fish_seen_subcommand_from init" -l skip-repos  -d "Skip cloning private repos"
 complete -c dot -n "__fish_seen_subcommand_from init" -l skip-tools  -d "Skip the upstream tool installers"
 complete -c dot -n "__fish_seen_subcommand_from init" -l skip-executor -d "Skip installing/registering executor"
-complete -c dot -n "__fish_seen_subcommand_from init" -l work        -d "Also install bundle.work"
+complete -c dot -n "__fish_seen_subcommand_from init" -l work        -d "Also install # work-tagged packages"
 complete -c dot -n "__fish_seen_subcommand_from init" -l dry-run     -d "Describe, change nothing"
 
 complete -c dot -n "__fish_seen_subcommand_from package" -a "add remove update list"
@@ -1522,11 +1528,11 @@ ${C_BOLD}SYMLINKS${C_RESET}
 
 ${C_BOLD}PACKAGES${C_RESET}
   package add <name> [brew|cask] [base|work]
-                            Add to a bundle and install. Kind is auto-detected.
-  package remove <name> [base|work]
+                            Add to the bundle and install. Kind is auto-detected.
+  package remove <name>
   package update            brew update && brew upgrade
-  package list              Show both bundles
-  check-packages            Installed vs missing, per bundle
+  package list              Show base and work-tagged entries
+  check-packages            Installed vs missing, base and work-tagged
 
 ${C_BOLD}KEYS${C_RESET}
   gen-ssh-key [--force]     ed25519 SSH key, agent, gh ssh-key add

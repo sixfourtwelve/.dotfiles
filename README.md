@@ -21,8 +21,7 @@ either.
 │   ├── .vimrc
 │   └── .tmux.conf
 └── packages/
-    ├── bundle           # Brewfile: every machine
-    ├── bundle.work      # Brewfile: work machines only
+    ├── bundle           # Brewfile: every machine (`# work`-tagged lines need --work)
     ├── ollama           # model manifest
     ├── repos            # private repos to clone
     └── tools            # installed by their own `curl | sh`, not brew
@@ -94,8 +93,8 @@ On a work machine, fill in the real values in
 | `dot update` | Pull, `brew upgrade`, restow, sync models |
 | `dot doctor` | Health check; non-zero exit on failure |
 | `dot stow` / `unstow` | Manage the symlinks only |
-| `dot package add <name> [brew\|cask] [base\|work]` | Add to a bundle and install; kind is auto-detected |
-| `dot package remove <name> [base\|work]` | Remove from a bundle (never uninstalls) |
+| `dot package add <name> [brew\|cask] [base\|work]` | Add to the bundle and install; kind is auto-detected |
+| `dot package remove <name>` | Remove from the bundle (never uninstalls) |
 | `dot check-packages` | Installed vs missing, per bundle |
 | `dot retry-failed` | Re-run whatever failed during the last `init` |
 | `dot gen-ssh-key [--force]` | ed25519 SSH key, agent, `gh ssh-key add` |

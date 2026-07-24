@@ -43,22 +43,24 @@ for it and fails if it reappears.
 
 ## Packages
 
-There are five manifests:
+There are four manifests:
 
 | File | Contents |
 |---|---|
-| `packages/bundle` | Brewfile installed on **every** machine, work included |
-| `packages/bundle.work` | Brewfile layered on top, work machines only |
+| `packages/bundle` | One Brewfile. Lines tagged `# work` at end-of-line are work-only |
 | `packages/ollama` | One model tag per line |
 | `packages/repos` | `owner/repo [dest]`, cloned over SSH |
 | `packages/tools` | `<binary> <shell> <url>`, installed by `curl \| sh` |
 
-`bundle.work` is additive. Do not duplicate an entry into both — the base
-bundle already covers work machines.
+Everything in `packages/bundle` installs on every machine except lines tagged
+`# work`, which only install with `--work`. The tag is a trailing Ruby
+comment, so `brew bundle` itself always sees a valid file regardless of
+whether `dot` filters it first — `dot package add <name> ... work` appends
+the tag for you; do not hand-edit it in ambiguous positions.
 
-**Casks are allowed in `bundle.work`.** Upstream `dmmulroy/.dotfiles` calls
-this an anti-pattern and keeps that file formulae-only; we diverge on purpose,
-because Slack is a cask and genuinely work-only.
+**Casks are allowed as `# work` entries.** Upstream `dmmulroy/.dotfiles`
+calls work-only casks an anti-pattern and keeps that file formulae-only; we
+diverge on purpose, because Slack is a cask and genuinely work-only.
 
 Prefer `dot package add <name>` over editing a Brewfile by hand — it verifies
 the token against Homebrew, works out formula vs cask, inserts it in
