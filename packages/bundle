@@ -6,7 +6,9 @@
 # ---------------------------------------------------------------------------
 # Formulae
 # ---------------------------------------------------------------------------
+brew "automake"
 brew "bun"
+brew "cglm"
 brew "cmake"
 brew "direnv"
 
@@ -27,10 +29,17 @@ brew "gnu-sed"
 brew "herdr"
 brew "jq"
 brew "llvm"
+brew "make"
 brew "neovim"
 brew "node"
 brew "python@3.14"
 brew "ripgrep"
+brew "sdl2"
+brew "sdl2_image"
+brew "sdl2_mixer"
+brew "sdl3"
+brew "sdl3_image"
+brew "sdl3_mixer"
 brew "shellcheck"
 brew "starship"
 brew "tmux"
