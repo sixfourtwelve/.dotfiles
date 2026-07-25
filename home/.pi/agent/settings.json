@@ -1,5 +1,5 @@
 {
-  "defaultModel": "claude-opus-4-8",
+  "defaultModel": "gpt-5.6-sol",
   "subagents": {
     "defaultModel": "ornith:9b",
     "agentOverrides": {
@@ -55,9 +55,9 @@
       }
     }
   },
-  "defaultProvider": "pi-claude-cli",
+  "defaultProvider": "openai-codex",
   "defaultThinkingLevel": "high",
-  "lastChangelogVersion": "0.82.0",
+  "lastChangelogVersion": "0.82.1",
   "quietStartup": true,
   "theme": "kanso-zen",
   "packages": [
