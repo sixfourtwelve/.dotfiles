@@ -20,6 +20,7 @@ brew "docker"
 brew "docker-compose"
 
 brew "fd"
+brew "bear"
 brew "ffmpeg"
 brew "fish"
 brew "fisher"

@@ -1,57 +1,35 @@
 {
   "defaultModel": "gpt-5.6-sol",
   "subagents": {
-    "defaultModel": "ornith:9b",
+    "defaultModel": "gpt-5.6-sol",
     "agentOverrides": {
       "planner": {
-        "model": "gemma4:26b-mlx",
-        "thinking": "high",
-        "fallbackModels": [
-          "anthropic/claude-sonnet-5"
-        ]
+        "model": "gpt-5.6-sol",
+        "thinking": "high"
       },
       "oracle": {
-        "model": "gemma4:31b-mlx",
-        "thinking": "high",
-        "fallbackModels": [
-          "anthropic/claude-opus-4-8"
-        ]
+        "model": "gpt-5.6-sol",
+        "thinking": "high"
       },
       "worker": {
-        "model": "ornith:9b",
-        "thinking": "low",
-        "fallbackModels": [
-          "anthropic/claude-sonnet-5",
-          "gemma4:26b-mlx"
-        ]
+        "model": "gpt-5.6-sol",
+        "thinking": "low"
       },
       "reviewer": {
-        "model": "gemma4:31b-mlx",
-        "thinking": "high",
-        "fallbackModels": [
-          "anthropic/claude-opus-4-8"
-        ]
+        "model": "gpt-5.6-sol",
+        "thinking": "high"
       },
       "researcher": {
-        "model": "gemma4:12b-mlx",
-        "thinking": "medium",
-        "fallbackModels": [
-          "anthropic/claude-sonnet-5"
-        ]
+        "model": "gpt-5.6-sol",
+        "thinking": "medium"
       },
       "scout": {
-        "model": "gemma4:e4b-mlx",
-        "thinking": "minimal",
-        "fallbackModels": [
-          "anthropic/claude-haiku-4-5"
-        ]
+        "model": "gpt-5.6-sol",
+        "thinking": "minimal"
       },
       "delegate": {
-        "model": "gemma4:e4b-mlx",
-        "thinking": "low",
-        "fallbackModels": [
-          "anthropic/claude-haiku-4-5"
-        ]
+        "model": "gpt-5.6-sol",
+        "thinking": "low"
       }
     }
   },
