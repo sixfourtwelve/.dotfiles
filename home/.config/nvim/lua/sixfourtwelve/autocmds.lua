@@ -3,7 +3,7 @@ vim.api.nvim_create_augroup('setIndent', { clear = true })
 vim.api.nvim_create_autocmd('BufRead', {
   pattern = { '*.h' },
   callback = function()
-    vim.bo.filetype = 'cpp'
+    vim.bo.filetype = 'objc'
   end
 })
 
