@@ -1127,17 +1127,6 @@ cmd_doctor() {
   fi
 
   step "Repo hygiene"
-  # Scans the stowed config only, not this script — `dot` names FleetEV in
-  # this very check, and matching itself would fail doctor forever.
-  local fleet_hits
-  fleet_hits=$(grep -rli fleetev "$HOME_DIR" "$PACKAGES_DIR" 2>/dev/null || true)
-  if [ -n "$fleet_hits" ]; then
-    check_fail "FleetEV references found in the tracked tree — these must not come back"
-    printf '%s\n' "$fleet_hits" | sed "s|$DOTFILES_DIR/|      |"
-  else
-    check_ok "no FleetEV references"
-  fi
-
   if secret_scan_quiet; then
     check_ok "no secret-shaped strings in tracked files"
   else

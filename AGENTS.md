@@ -37,9 +37,10 @@ clone at install time. If asked to "make the fonts install automatically", that
 is already done; do not solve it by tracking the files. The same reasoning
 applies to any other licensed asset.
 
-**Do not add FleetEV anything.** It was removed deliberately, along with the
-`sync-portable` skill that referenced it. `dot doctor` greps the tracked tree
-for it and fails if it reappears.
+**Do not add employer-specific names or internal details.** Use `WORK` as the
+placeholder when documentation needs to describe workplace-only configuration.
+Keep machine-specific or sensitive values in the untracked files documented in
+the README.
 
 ## Packages
 
