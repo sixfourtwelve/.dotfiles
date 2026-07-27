@@ -19,6 +19,7 @@ brew "colima"
 brew "docker"
 brew "docker-compose"
 
+brew "ninja"
 brew "fd"
 brew "bear"
 brew "ffmpeg"
