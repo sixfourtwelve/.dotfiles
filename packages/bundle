@@ -15,6 +15,7 @@ brew "direnv"
 # Containers. colima is the VM/runtime; `docker` here is the CLI only, not
 # Docker Desktop — the two conflict, so do not add the docker-desktop cask.
 # After install: `colima start`, then docker talks to it with no further setup.
+brew "wezterm"
 brew "colima"
 brew "docker"
 brew "docker-compose"
