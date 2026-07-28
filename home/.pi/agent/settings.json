@@ -1,5 +1,5 @@
 {
-  "defaultModel": "gpt-5.6-sol",
+  "defaultModel": "gemma-4-26b-a4b-it-4bit",
   "subagents": {
     "defaultModel": "gpt-5.6-sol",
     "agentOverrides": {
@@ -33,7 +33,7 @@
       }
     }
   },
-  "defaultProvider": "openai-codex",
+  "defaultProvider": "omlx",
   "defaultThinkingLevel": "high",
   "lastChangelogVersion": "0.82.1",
   "quietStartup": true,
@@ -55,7 +55,9 @@
     "npm:pi-thinking-steps",
     "git:github.com/dmmulroy/pi-mcp",
     "npm:pi-claude-cli",
-    "npm:@ogulcancelik/pi-ssh-tools"
+    "npm:@ogulcancelik/pi-ssh-tools",
+    "npm:@mohndoe/pi-atlas",
+    "npm:@rolemodel/pi-omlx"
   ],
   "hideThinkingBlock": true,
   "piExecutor": {

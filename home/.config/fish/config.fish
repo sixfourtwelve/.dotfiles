@@ -28,7 +28,10 @@ if test -d $openssl_prefix
     end
 end
 
+set -gx VCPKG_ROOT "$HOME/vcpkg"
+fish_add_path "$HOME/.local/bin" "$VCPKG_ROOT"
+
 # Was commented out for as long as ~/.config/starship.toml has existed; the
 # formula is in packages/bundle now, so the configured prompt actually runs.
 starship init fish | source
-export PATH="$HOME/.local/bin:$PATH"
+

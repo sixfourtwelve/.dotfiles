@@ -26,7 +26,7 @@ font-family = JetBrains Mono
 
   # Font size
 
-  font-size = 20
+  font-size = 16
   font-thicken = true
   bold-is-bright = true
 
