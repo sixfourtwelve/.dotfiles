@@ -4,6 +4,7 @@
 mlx-community/gemma-4-12B-it-8bit
 mlx-community/gemma-4-26b-a4b-it-4bit
 mlx-community/gemma-4-31b-it-4bit
+mlx-community/gemma-4-e4b-it-4bit
 mlx-community/Ornith-1.0-35B-4bit
 mlx-community/Ornith-1.0-9B-4bit
 mlx-community/Qwen3.6-27B-4bit
