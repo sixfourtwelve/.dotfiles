@@ -1,5 +1,5 @@
 {
-  "defaultModel": "gemma-4-26b-a4b-it-4bit",
+  "defaultModel": "gemma4:26b-mlx",
   "subagents": {
     "defaultModel": "gpt-5.6-sol",
     "agentOverrides": {
@@ -33,7 +33,7 @@
       }
     }
   },
-  "defaultProvider": "omlx",
+  "defaultProvider": "ollama",
   "defaultThinkingLevel": "high",
   "lastChangelogVersion": "0.82.1",
   "quietStartup": true,
