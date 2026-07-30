@@ -1,5 +1,5 @@
 {
-  "defaultModel": "gemma4:26b-mlx",
+  "defaultModel": "gpt-5.6-sol",
   "subagents": {
     "defaultModel": "gpt-5.6-sol",
     "agentOverrides": {
@@ -33,7 +33,7 @@
       }
     }
   },
-  "defaultProvider": "ollama",
+  "defaultProvider": "openai-codex",
   "defaultThinkingLevel": "high",
   "lastChangelogVersion": "0.82.1",
   "quietStartup": true,
@@ -44,20 +44,15 @@
     "npm:pi-web-access",
     "npm:pi-image-preview",
     "npm:pi-rewind",
-    "npm:pi-claude-code-tui",
     "npm:@haispeed/pi-deck",
-    "npm:pi-voice-stt",
-    "npm:@feniix/pi-notion",
-    "npm:@alasano/pi-linear",
     "npm:@narumitw/pi-caffeinate",
     "npm:@narumitw/pi-btw",
     "npm:@narumitw/pi-webui",
     "npm:pi-thinking-steps",
     "git:github.com/dmmulroy/pi-mcp",
-    "npm:pi-claude-cli",
     "npm:@ogulcancelik/pi-ssh-tools",
     "npm:@mohndoe/pi-atlas",
-    "npm:@rolemodel/pi-omlx"
+    "npm:pi-claude-code-tui"
   ],
   "hideThinkingBlock": true,
   "piExecutor": {
