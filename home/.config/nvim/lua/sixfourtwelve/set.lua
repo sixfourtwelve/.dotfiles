@@ -1,5 +1,5 @@
 vim.o.number = true
-vim.o.laststatus = 0
+vim.o.laststatus = 3
 vim.o.numberwidth = 1
 vim.o.relativenumber = false
 vim.o.tabstop = 2

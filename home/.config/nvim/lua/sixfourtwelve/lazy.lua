@@ -4,16 +4,6 @@ vim.g.mapleader = " "
 vim.g.maplocalleader = ","
 
 return require("lazy").setup({
-  {
-    "webhooked/kanso.nvim",
-    config = function()
-      require("kanso").setup({
-        bold = true,
-        italics = false,
-      })
-      vim.cmd.colorscheme("kanso-zen")
-    end
-  },
   { "catppuccin/nvim",   name = "catppuccin", priority = 1000 },
   { "github/copilot.vim" },
   {
@@ -105,29 +95,29 @@ return require("lazy").setup({
       require('mini.icons').setup({ style = 'glyph' })
       MiniIcons.mock_nvim_web_devicons()
       -- require('mini.tabline').setup()
-      -- require('mini.statusline').setup({
-      --   use_icons = true,
-      --   content = {
-      --     active = function()
-      --       local mode, mode_hl = MiniStatusline.section_mode({ trunc_width = 120 })
-      --       local git           = MiniStatusline.section_git({ trunc_width = 75 })
-      --       local diff          = MiniStatusline.section_diff({ trunc_width = 75 })
-      --       local diagnostics   = MiniStatusline.section_diagnostics({ trunc_width = 75 })
-      --       local filename      = MiniStatusline.section_filename({ trunc_width = 140 })
-      --       local filetype      = vim.bo.filetype
-      --       local location      = string.format('%d:%d', vim.fn.line('.'), vim.fn.col('.'))
-      --       return MiniStatusline.combine_groups({
-      --         { hl = mode_hl,                 strings = { mode } },
-      --         { hl = 'MiniStatuslineDevinfo', strings = { git, diff, diagnostics } },
-      --         '%<',
-      --         { hl = 'MiniStatuslineFilename', strings = { filename } },
-      --         '%=',
-      --         { hl = 'MiniStatuslineFileinfo', strings = { filetype } },
-      --         { hl = mode_hl,                  strings = { location } },
-      --       })
-      --     end,
-      --   },
-      -- })
+      require('mini.statusline').setup({
+        use_icons = true,
+        content = {
+          active = function()
+            local mode, mode_hl = MiniStatusline.section_mode({ trunc_width = 120 })
+            local git           = MiniStatusline.section_git({ trunc_width = 75 })
+            local diff          = MiniStatusline.section_diff({ trunc_width = 75 })
+            local diagnostics   = MiniStatusline.section_diagnostics({ trunc_width = 75 })
+            local filename      = MiniStatusline.section_filename({ trunc_width = 140 })
+            local filetype      = vim.bo.filetype
+            local location      = string.format('%d:%d', vim.fn.line('.'), vim.fn.col('.'))
+            return MiniStatusline.combine_groups({
+              { hl = mode_hl,                 strings = { mode } },
+              { hl = 'MiniStatuslineDevinfo', strings = { git, diff, diagnostics } },
+              '%<',
+              { hl = 'MiniStatuslineFilename', strings = { filename } },
+              '%=',
+              { hl = 'MiniStatuslineFileinfo', strings = { filetype } },
+              { hl = mode_hl,                  strings = { location } },
+            })
+          end,
+        },
+      })
     end
   },
   {
@@ -139,12 +129,14 @@ return require("lazy").setup({
         style = "moon",
         transparent = true,
         styles = {
+          comments = { italic = true },
+          keywords = { italic = true },
           sidebars = "transparent",
           floats = "transparent",
         },
       })
       -- vim.cmd("colorscheme catppuccin-mocha")
-      -- vim.cmd("colorscheme tokyonight-moon")
+      vim.cmd("colorscheme tokyonight-moon")
       vim.api.nvim_set_hl(0, "Normal", { bg = "none" })
       vim.api.nvim_set_hl(0, "NormalFloat", { bg = "none" })
       vim.api.nvim_set_hl(0, "NormalNC", { bg = "none" })
