@@ -35,7 +35,7 @@
   },
   "defaultProvider": "openai-codex",
   "defaultThinkingLevel": "high",
-  "lastChangelogVersion": "0.82.1",
+  "lastChangelogVersion": "0.83.0",
   "quietStartup": true,
   "theme": "kanso-zen",
   "packages": [
